@@ -1,6 +1,6 @@
 {
   "name": "persistency",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "The lightweight resilient persistency library",
   "main": "lib/",
   "types": "lib/types",

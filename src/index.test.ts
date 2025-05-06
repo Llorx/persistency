@@ -6,14 +6,17 @@ import * as Path from "path";
 import test, { After } from "arrange-act-assert";
 
 import { Persistency } from ".";
+import * as constants from "./constants";
+import { sha256 } from "./utils";
 
 test.describe("Persistency", test => {
     const value1 = Buffer.from([ 0, 1, 2, 3,  4,  5 ]);
     const value2 = Buffer.from([ 6, 7, 8, 9, 10, 11 ]);
-    async function newPersistency(after:After, tmpFolder?:string) {
+    async function newPersistency(after:After, tmpFolder?:string, reclaimTimeout?:number) {
         tmpFolder = tmpFolder || after(await Fs.mkdtemp(Path.join(Os.tmpdir(), "persistency-tests-")), folder => Fs.rm(folder, { recursive: true, force: true }));
         const persistency = after(new Persistency({
-            folder: tmpFolder
+            folder: tmpFolder,
+            reclaimTimeout: reclaimTimeout
         }), persistency => persistency.close());
         return { persistency, tmpFolder };
     }
@@ -119,9 +122,32 @@ test.describe("Persistency", test => {
             Assert.strictEqual(persistency.get("test"), null);
         }
     });
+    test("Should load wrapped around entry", {
+        async ARRANGE(after) {
+            const { persistency, tmpFolder } = await newPersistency(after);
+            persistency.set("test", value1);
+            persistency.set("test", value2);
+            persistency.close();
+
+            // Set TS of value2 to 0xFFFFFFFF
+            const buffer = await Fs.readFile(persistency.entriesFile);
+            const entryLocation = constants.MAGIC.length + constants.EntryHeaderOffsets_V0.SIZE + constants.EntryOffsets_V0.SIZE;
+            buffer.writeUint32BE(0xFFFFFFFF, entryLocation + constants.EntryHeaderOffsets_V0.SIZE + constants.EntryOffsets_V0.TS);
+            const entryDataLocation = entryLocation + constants.EntryHeaderOffsets_V0.SIZE;
+            const hash = sha256(buffer.subarray(entryDataLocation, entryDataLocation + constants.EntryOffsets_V0.SIZE));
+            hash.copy(buffer, entryLocation + constants.EntryHeaderOffsets_V0.ENTRY_HASH);
+            await Fs.writeFile(persistency.entriesFile, buffer);
+            return { tmpFolder };
+        },
+        ACT({ tmpFolder }, after) {
+            return newPersistency(after, tmpFolder);
+        },
+        ASSERT({ persistency }) {
+            Assert.deepStrictEqual(persistency.get("test"), value1);
+        }
+    });
     // TODO:
-    // Testear cuando un TS hace wrap around, que se sigue quedando el TS "mayor" (que es el menor pero mayor que la mitad)
-    // Testear que cuando se hace set de varias enmtradas, el get devuelve la última, sin recargar disco.
+    // Testear que cuando se hace set de varias entradas, el get devuelve la última, sin recargar disco.
     // Testear que al eliminar, el dato se puede sobreescribir de nuevo
     // Testear que cuando se sobreescribe un dato, se purga el anterior cuando han pasado X milisegundos
     // Testear que si se elimina un dato que está purgando, se elimina de la lista de purgas

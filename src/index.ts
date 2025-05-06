@@ -193,7 +193,7 @@ export class Persistency {
                 const location = dataLocation.start;
                 dataLocation.start += size;
                 return location;
-            } else if (dataLocation.end - dataLocation.start > size) {
+            } else if (dataLocation.end - dataLocation.start >= size) {
                 const location = dataLocation.start;
                 dataLocation.start += size;
                 if (dataLocation.start >= dataLocation.end) {
@@ -216,15 +216,17 @@ export class Persistency {
                     next.end = end;
                     if (next.end >= next.next.start) {
                         next.end = next.next.end!;
-                        next.next = next.next.next!;
-                        if (next.end == null) {
-                            return true;
+                        if (next.next.end == null) {
+                            next.next = next.next.next!;
+                            return next.start;
+                        } else {
+                            next.next = next.next.next!;
                         }
                     }
                 } else if (next.start === end) {
                     next.start = start;
                     if (next.end == null) {
-                        return true;
+                        return next.start;
                     }
                 } else {
                     next.next = {
@@ -237,7 +239,6 @@ export class Persistency {
             }
             next = next.next;
         } while (next);
-        return false;
         next = {
             start: root.start,
             end: root.end!,
@@ -246,15 +247,18 @@ export class Persistency {
         root.start = start;
         root.end = end;
         root.next = next;
+        return null;
     }
     private _freeEntry(entry:Entry) {
-        if (this._freeLocation(this._nextFreeEntry, entry.location, entry.location + EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.SIZE)) {
-            this._fd.entries.truncate(entry.location); // No need to fsync after this
+        const endFile = this._freeLocation(this._nextFreeEntry, entry.location, entry.location + EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.SIZE);
+        if (endFile != null) {
+            this._fd.entries.truncate(endFile); // No need to fsync after this
         }
     }
     private _freeData(entry:Entry) {
-        if (this._freeLocation(this._nextFreeData, entry.dataLocation, entry.valueLocation + entry.valueSize)) {
-            this._fd.data.truncate(entry.location); // No need to fsync after this
+        const endFile = this._freeLocation(this._nextFreeData, entry.dataLocation, entry.valueLocation + entry.valueSize);
+        if (endFile != null) {
+            this._fd.data.truncate(endFile); // No need to fsync after this
         }
     }
     private _deleteEntry(entry:Entry) {
