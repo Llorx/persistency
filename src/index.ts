@@ -4,7 +4,7 @@ import { Bytes, EMPTY_ENTRY, EntryHeaderOffsets_V0, EntryOffsets_V0, MAGIC, Valu
 
 export type PersistencyOptions = {
     folder:string;
-    purgeMs?:number;
+    reclaimTimeout?:number;
 };
 
 type Entry = {
@@ -47,7 +47,7 @@ export class Persistency {
         }
         this.entriesFile = Path.join(options.folder, "entries.db");
         this.dataFile = Path.join(options.folder, "data.db");
-        this.purgeMs = options.purgeMs ?? 10000;
+        this.purgeMs = options.reclaimTimeout ?? 10000;
         this._fd = this._loadDataSync();
     }
     private _loadDataSync() {
