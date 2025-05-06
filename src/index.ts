@@ -28,7 +28,7 @@ export class Persistency {
     private _fd;
     readonly entriesFile;
     readonly dataFile;
-    readonly purgeMs;
+    readonly reclaimTimeout;
     private _data = new Map<string, Entry[]>();
     private _nextFreeEntry:FreeLocation = {
         start: MAGIC.length,
@@ -47,7 +47,7 @@ export class Persistency {
         }
         this.entriesFile = Path.join(options.folder, "entries.db");
         this.dataFile = Path.join(options.folder, "data.db");
-        this.purgeMs = options.reclaimTimeout ?? 10000;
+        this.reclaimTimeout = options.reclaimTimeout ?? 10000;
         this._fd = this._loadDataSync();
     }
     private _loadDataSync() {
@@ -259,7 +259,7 @@ export class Persistency {
             this._purgeEntries.push({
                 key: key,
                 entry: entry,
-                ts: Date.now() + this.purgeMs
+                ts: Date.now() + this.reclaimTimeout
             });
         }
     }
@@ -303,8 +303,10 @@ export class Persistency {
         if (entries) {
             const lastEntry = entries[entries.length - 1];
             entry.ts = (lastEntry.ts + 1) & Values.UINT_32 >>> 0;
+            if (this.reclaimTimeout > 0) {
+                this._purgeEntry(key, lastEntry);
+            }
             entries.push(entry);
-            this._purgeEntry(key, lastEntry);
         } else {
             this._data.set(key, [ entry ]);
         }
@@ -327,10 +329,17 @@ export class Persistency {
         this._fd.data.write(keyBuffer, dataLocation);
         this._fd.data.write(value, dataLocation + keyBuffer.length);
         this._fd.data.fsync();
-
+        
         this._fd.entries.write(entryHeaderBuffer, entry.location);
         this._fd.entries.write(entryBuffer, entry.location + entryHeaderBuffer.length);
         this._fd.entries.fsync();
+
+        if (entries && this.reclaimTimeout <= 0) {
+            for (const entry of entries.splice(0, entries.length - 1)) {
+                this._deleteEntry(entry);
+            }
+            this._fd.entries.fsync(); // Another fsync to ensure that previous entry was fully written
+        }
     }
     get(key:string) {
         const entries = this._data.get(key);
@@ -369,6 +378,10 @@ export class Persistency {
     }
     close() {
         this._checkPurge();
-        this._fd?.close();
+        if (this._fd) {
+            this._fd.entries.fsync();
+            this._fd.data.fsync();
+            this._fd.close();
+        }
     }
 }
