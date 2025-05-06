@@ -1,0 +1,40 @@
+{
+  "name": "persistency",
+  "version": "0.0.2",
+  "description": "The lightweight persistency library",
+  "main": "lib/",
+  "types": "lib/types",
+  "files": [
+    "lib/",
+    "LICENSE"
+  ],
+  "private": false,
+  "publishConfig": {
+    "provenance": true
+  },
+  "scripts": {
+    "watch": "npm run clean && npx tsc -p tsconfig.json -watch",
+    "build": "npm run clean && npx tsc -p tsconfig.build.json",
+    "build-debug": "npm run clean && npx tsc -p tsconfig.json",
+    "build-test": "npm run clean && npx tsc -p tsconfig.test.json",
+    "test": "npx aaa",
+    "clean": "node -e \"require('fs').rm('lib', {recursive: true}, O_o => {})\""
+  },
+  "author": "Llorx",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Llorx/persistency.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Llorx/persistency/issues"
+  },
+  "homepage": "https://github.com/Llorx/persistency#readme",
+  "devDependencies": {
+    "@types/node": "^22.7.8",
+    "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "arrange-act-assert": "^0.0.5"
+  }
+}

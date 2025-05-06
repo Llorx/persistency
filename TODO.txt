@@ -1,0 +1,6 @@
+COntrolar cuando 2 entries apuntan al mismo data y ambos son válidos pero con diferente key. Puede ocurrir porque se ha hecho set del mismo data 2 veces con diferente key mientras hacía overwrite de un dato malo y blah blah.
+En ese caso se quedará uno de los 2 inodes con el dato
+
+Controlar que cuando hay demasiadas entradas esperando ser purgadas (más de la mitad del TS soportado) borrar el resto de entradas para evitar wrap arounds
+
+Meter b-trees para los linked lists para poder buscar más rápido en vez de hacerlo lineal
