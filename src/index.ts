@@ -1,4 +1,5 @@
 import * as Path from "path";
+
 import { openFiles, sha256 } from "./utils";
 import { Bytes, EMPTY_ENTRY, EntryHeaderOffsets_V0, EntryOffsets_V0, MAGIC, Values } from "./constants";
 
@@ -6,7 +7,6 @@ export type PersistencyOptions = {
     folder:string;
     reclaimTimeout?:number;
 };
-
 type Entry = {
     location:number;
     dataLocation:number;
@@ -238,6 +238,14 @@ export class Persistency {
             next = next.next;
         } while (next);
         return false;
+        next = {
+            start: root.start,
+            end: root.end!,
+            next: root.next!
+        };
+        root.start = start;
+        root.end = end;
+        root.next = next;
     }
     private _freeEntry(entry:Entry) {
         if (this._freeLocation(this._nextFreeEntry, entry.location, entry.location + EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.SIZE)) {
