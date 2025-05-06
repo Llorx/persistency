@@ -26,6 +26,7 @@ type FreeLocation = {
 });
 export class Persistency {
     private _fd;
+    private _closed = false;
     readonly entriesFile;
     readonly dataFile;
     readonly reclaimTimeout;
@@ -286,6 +287,17 @@ export class Persistency {
             }
         }
     }
+    private _getEntry(entry:Entry) {
+        const valueBuffer = Buffer.allocUnsafe(entry.valueSize);
+        this._fd.data.read(valueBuffer, entry.valueLocation, true); // Always read from file so can have more data than available RAM. The OS will handle the caché
+        return valueBuffer;
+    }
+    *cursor():Generator<[string, Buffer], null, void> {
+        for (const [key, entry] of this._data) {
+            yield [key, this._getEntry(entry[entry.length - 1])];
+        }
+        return null;
+    }
     set(key:string, value:Buffer) {
         this._checkPurge();
         const entries = this._data.get(key);
@@ -345,9 +357,7 @@ export class Persistency {
         const entries = this._data.get(key);
         if (entries) {
             const lastEntry = entries[entries.length - 1];
-            const valueBuffer = Buffer.allocUnsafe(lastEntry.valueSize);
-            this._fd.data.read(valueBuffer, lastEntry.valueLocation, true); // Always read from file so can have more data than available RAM. The OS will handle the caché
-            return valueBuffer;
+            return this._getEntry(lastEntry);
         } else {
             return null;
         }
@@ -377,6 +387,10 @@ export class Persistency {
         }
     }
     close() {
+        if (this._closed) {
+            return;
+        }
+        this._closed = true;
         this._checkPurge();
         if (this._fd) {
             this._fd.entries.fsync();
