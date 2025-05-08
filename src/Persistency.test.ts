@@ -5,7 +5,7 @@ import * as Path from "path";
 
 import test, { After } from "arrange-act-assert";
 
-import { Persistency } from ".";
+import { Persistency } from "./Persistency";
 import * as constants from "./constants";
 import { sha256 } from "./utils";
 
@@ -63,6 +63,18 @@ test.describe("Persistency", test => {
             return newPersistency(after, tmpFolder);
         },
         ASSERT({ persistency }) {
+            Assert.deepStrictEqual(persistency.get("test"), value2);
+        }
+    });
+    test("Should update data without reloading", {
+        ARRANGE(after) {
+            return newPersistency(after);
+        },
+        ACT({ persistency }) {
+            persistency.set("test", value1);
+            persistency.set("test", value2);
+        },
+        ASSERT(_, { persistency }) {
             Assert.deepStrictEqual(persistency.get("test"), value2);
         }
     });
@@ -147,7 +159,7 @@ test.describe("Persistency", test => {
         }
     });
     // TODO:
-    // Testear que cuando se hace set de varias entradas, el get devuelve la última, sin recargar disco.
+    // Testear que count() contiene la cantidad de entradas correspondientes
     // Testear que al eliminar, el dato se puede sobreescribir de nuevo
     // Testear que cuando se sobreescribe un dato, se purga el anterior cuando han pasado X milisegundos
     // Testear que si se elimina un dato que está purgando, se elimina de la lista de purgas
@@ -162,4 +174,5 @@ test.describe("Persistency", test => {
     // Y ya testear todas las posibilidades al cargar (incluyendo que trunca)
     // Testear que trunca si hace free de un dato al final
     // Testear cuando se escriben datos parciales
+    // Testear todas las posibles formas de librear espacio existentes. De hecho esto debería ser una clase propia con sus propios tests.
 });
