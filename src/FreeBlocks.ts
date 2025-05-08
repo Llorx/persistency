@@ -14,6 +14,7 @@ export class FreeBlocks {
         next: null
     };
     updateAllocation() {
+        // Assume updating in ascending order, so "next" is always going to be the last block
         let next = this._next;
         return {
             add(start:number, end:number) {
@@ -52,7 +53,7 @@ export class FreeBlocks {
             }
             block = block.next;
         } while(block);
-        throw new Error("Free data location not found");
+        throw new Error("Free data location not found"); // Never should happen
     }
     free(start:number, end:number) {
         let next:FreeBlock|null = this._next;
@@ -90,5 +91,14 @@ export class FreeBlocks {
             next = next.next;
         } while (next);
         return null;
+    }
+    getFreeBlocks() {
+        const blocks:[start:number, end:number|null][] = [];
+        let next:FreeBlock|null = this._next;
+        do {
+            blocks.push([next.start, next.end]);
+            next = next.next;
+        } while (next);
+        return blocks;
     }
 }
