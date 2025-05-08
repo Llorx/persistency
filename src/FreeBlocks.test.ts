@@ -5,6 +5,27 @@ import test from "arrange-act-assert";
 import { FreeBlocks } from "./FreeBlocks";
 
 test.describe("FreeBlocks", test => {
+    test("should return correct free blocks", {
+        ARRANGE() {
+            const freeBlocks = new FreeBlocks();
+            const allocation = freeBlocks.updateAllocation();
+            allocation.add(0, 4);
+            allocation.add(6, 8);
+            allocation.add(8, 12);
+            allocation.add(13, 14);
+            return { freeBlocks }
+        },
+        ACT({ freeBlocks }) {
+            return freeBlocks.getFreeBlocks();
+        },
+        ASSERT(_, { freeBlocks }) {
+            Assert.deepStrictEqual(freeBlocks.getFreeBlocks(), [
+                [4, 6],
+                [12, 13],
+                [14, null]
+            ]);
+        }
+    });
     test.describe("initial allocation", test => {
         test("should add blocks", {
             ARRANGE() {
