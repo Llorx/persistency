@@ -1,12 +1,6 @@
-import { sha256 } from "./utils";
-
 export const MAGIC = Buffer.from([ 0xFA, 0xF2, 0xD6, 0x91 ]);
 
-export const EMPTY_ENTRY = Buffer.allocUnsafe(EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.SIZE);
-EMPTY_ENTRY[EntryHeaderOffsets_V0.VERSION] = 0;
-EMPTY_ENTRY.fill(0, EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.LOCATION);
-const entryHash = sha256(EMPTY_ENTRY.subarray(EntryHeaderOffsets_V0.SIZE));
-entryHash.copy(EMPTY_ENTRY, EntryHeaderOffsets_V0.ENTRY_HASH);
+export const BUFFER_0 = Buffer.from([ 0x00 ]);
 
 export const enum Bytes {
     SHA_256 = 256 / 8,
@@ -23,7 +17,8 @@ export const enum Values {
 }
 export const enum EntryHeaderOffsets_V0 {
     VERSION = 0,
-    ENTRY_HASH = VERSION + Bytes.UINT_8,
+    ACTIVE = VERSION + Bytes.UINT_8,
+    ENTRY_HASH = ACTIVE + Bytes.UINT_8,
     SIZE = ENTRY_HASH + Bytes.SHA_256
 }
 export const enum EntryOffsets_V0 {

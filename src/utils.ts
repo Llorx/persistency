@@ -21,6 +21,9 @@ function reader(fd:number) {
         get offset() {
             return offset;
         },
+        advance(count:number) {
+            offset += count;
+        },
         read(buffer:Buffer, errorOnEOF:boolean) {
             const result = read(fd, buffer, offset, errorOnEOF);
             offset += buffer.length;
