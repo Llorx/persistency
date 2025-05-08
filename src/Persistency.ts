@@ -207,6 +207,9 @@ export class Persistency {
         this._fd.data.read(valueBuffer, entry.valueLocation, true); // Always read from file so can have more data than available RAM. The OS will handle the caché
         return valueBuffer;
     }
+    count() {
+        return this._data.size;
+    }
     *cursor():Generator<[string, Buffer], null, void> {
         for (const [key, entry] of this._data) {
             yield [key, this._getEntry(entry[entry.length - 1])];
