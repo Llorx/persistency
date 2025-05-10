@@ -175,13 +175,13 @@ test.describe("Persistency", test => {
             Assert.strictEqual(persistency.get("test"), null);
         }
     });
-    test("Should load wrapped around entry", {
+    test("Should load wrapped around entry when second value is bigger", {
         async ARRANGE(after) {
             const { persistency, folder: folder } = await newPersistency(after);
             persistency.set("test", value1);
             persistency.set("test", value2);
             persistency.close();
-            await setValueTs(persistency, 1, 0xFFFFFFFF); // Set value2 ts to 0xFFFFFFFF
+            await setValueTs(persistency, 1, 0xFAFBFCFD); // Set value2 ts to 0xFAFBFCFD
             return { folder };
         },
         ACT({ folder }, after) {
@@ -189,6 +189,22 @@ test.describe("Persistency", test => {
         },
         ASSERT({ persistency }) {
             Assert.deepStrictEqual(persistency.get("test"), value1);
+        }
+    });
+    test("Should load wrapped around entry when first value is bigger", {
+        async ARRANGE(after) {
+            const { persistency, folder: folder } = await newPersistency(after);
+            persistency.set("test", value1);
+            persistency.set("test", value2);
+            persistency.close();
+            await setValueTs(persistency, 0, 0xFAFBFCFD); // Set value1 ts to 0xFAFBFCFD
+            return { folder };
+        },
+        ACT({ folder }, after) {
+            return newPersistency(after, { folder });
+        },
+        ASSERT({ persistency }) {
+            Assert.deepStrictEqual(persistency.get("test"), value2);
         }
     });
     test("Should overwrite deleted entries", {

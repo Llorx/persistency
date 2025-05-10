@@ -275,6 +275,7 @@ export class Persistency {
         this._fd.entries.fsync();
 
         if (entries && this.reclaimTimeout <= 0) {
+            // Delete after data write
             for (const entry of entries.splice(0, entries.length - 1)) {
                 this._deleteEntry(entry);
             }
