@@ -290,9 +290,9 @@ test.describe("Persistency", test => {
     // Testear que el dato desaparece si tooodas las entradas han sido purgadas (no tengo claro cómo puede ocurrir esto)
 
     // Testear que al inicio genera los huecos tanto de entries como datas correspondientes.
-    // Cómo testear? Pues cargando algo con huecos y después 
+    // Cómo testear? Pues devolviendo el json de huecos directamente y yaw...
 
     // Y ya testear todas las posibilidades al cargar (incluyendo que trunca)
     // Testear que trunca si hace free de un dato al final
-    // Testear cuando se escriben datos parciales
+    // Testear cuando se escriben datos parciales de absolutamente todos los bytes posibles
 });

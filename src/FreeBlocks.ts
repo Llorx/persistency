@@ -92,13 +92,16 @@ export class FreeBlocks {
         } while (next);
         return null;
     }
-    getFreeBlocks() {
-        const blocks:[start:number, end:number|null][] = [];
-        let next:FreeBlock|null = this._next;
-        do {
-            blocks.push([next.start, next.end]);
+    getAllocatedBlocks() {
+        const blocks:[start:number, end:number][] = [];
+        if (this._next.start !== 0) {
+            blocks.push([0, this._next.start]);
+        }
+        let next = this._next;
+        while (next.next) {
+            blocks.push([next.end, next.next.start]);
             next = next.next;
-        } while (next);
+        };
         return blocks;
     }
 }

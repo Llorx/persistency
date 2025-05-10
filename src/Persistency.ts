@@ -314,6 +314,12 @@ export class Persistency {
             return false;
         }
     }
+    getAllocatedBlocks() {
+        return {
+            entries: this._freeEntryBlocks.getAllocatedBlocks(),
+            data: this._freeDataBlocks.getAllocatedBlocks()
+        };
+    }
     close() {
         if (this._closed) {
             return;

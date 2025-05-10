@@ -5,26 +5,91 @@ import test from "arrange-act-assert";
 import { FreeBlocks } from "./FreeBlocks";
 
 test.describe("FreeBlocks", test => {
-    test("should return correct free blocks", {
-        ARRANGE() {
-            const freeBlocks = new FreeBlocks();
-            const allocation = freeBlocks.updateAllocation();
-            allocation.add(0, 4);
-            allocation.add(6, 8);
-            allocation.add(8, 12);
-            allocation.add(13, 14);
-            return { freeBlocks }
-        },
-        ACT({ freeBlocks }) {
-            return freeBlocks.getFreeBlocks();
-        },
-        ASSERT(_, { freeBlocks }) {
-            Assert.deepStrictEqual(freeBlocks.getFreeBlocks(), [
-                [4, 6],
-                [12, 13],
-                [14, null]
-            ]);
-        }
+    test.describe("getAllocatedBlocks", test => {
+        test("should return allocated blocks", {
+            ARRANGE() {
+                const freeBlocks = new FreeBlocks();
+                const allocation = freeBlocks.updateAllocation();
+                allocation.add(0, 4);
+                allocation.add(6, 8);
+                allocation.add(8, 12);
+                allocation.add(13, 14);
+                return { freeBlocks }
+            },
+            ACT({ freeBlocks }) {
+                return freeBlocks.getAllocatedBlocks();
+            },
+            ASSERT(_, { freeBlocks }) {
+                Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), [
+                    [0, 4],
+                    [6, 12],
+                    [13, 14]
+                ]);
+            }
+        });
+        test("should return allocated blocks when first bytes are not allocated", {
+            ARRANGE() {
+                const freeBlocks = new FreeBlocks();
+                const allocation = freeBlocks.updateAllocation();
+                allocation.add(6, 8);
+                allocation.add(8, 12);
+                allocation.add(13, 14);
+                return { freeBlocks }
+            },
+            ACT({ freeBlocks }) {
+                return freeBlocks.getAllocatedBlocks();
+            },
+            ASSERT(_, { freeBlocks }) {
+                Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), [
+                    [6, 12],
+                    [13, 14]
+                ]);
+            }
+        });
+        test("should not return any block if not allocation happened", {
+            ARRANGE() {
+                const freeBlocks = new FreeBlocks();
+                return { freeBlocks }
+            },
+            ACT({ freeBlocks }) {
+                return freeBlocks.getAllocatedBlocks();
+            },
+            ASSERT(_, { freeBlocks }) {
+                Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), []);
+            }
+        });
+        test("should return only the first block if only one allocation happened at start", {
+            ARRANGE() {
+                const freeBlocks = new FreeBlocks();
+                const allocation = freeBlocks.updateAllocation();
+                allocation.add(0, 4);
+                return { freeBlocks }
+            },
+            ACT({ freeBlocks }) {
+                return freeBlocks.getAllocatedBlocks();
+            },
+            ASSERT(_, { freeBlocks }) {
+                Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), [
+                    [0, 4]
+                ]);
+            }
+        });
+        test("should return only the first block if only one allocation happened at the middle", {
+            ARRANGE() {
+                const freeBlocks = new FreeBlocks();
+                const allocation = freeBlocks.updateAllocation();
+                allocation.add(5, 6);
+                return { freeBlocks }
+            },
+            ACT({ freeBlocks }) {
+                return freeBlocks.getAllocatedBlocks();
+            },
+            ASSERT(_, { freeBlocks }) {
+                Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), [
+                    [5, 6]
+                ]);
+            }
+        });
     });
     test.describe("initial allocation", test => {
         test("should add blocks", {
@@ -38,9 +103,9 @@ test.describe("FreeBlocks", test => {
                 allocation.add(6, 8);
             },
             ASSERT(_, { freeBlocks }) {
-                Assert.deepStrictEqual(freeBlocks.getFreeBlocks(), [
-                    [4, 6],
-                    [8, null]
+                Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), [
+                    [0, 4],
+                    [6, 8]
                 ]);
             }
         });
@@ -56,9 +121,9 @@ test.describe("FreeBlocks", test => {
                 allocation.add(7, 9);
             },
             ASSERT(_, { freeBlocks }) {
-                Assert.deepStrictEqual(freeBlocks.getFreeBlocks(), [
-                    [6, 7],
-                    [9, null]
+                Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), [
+                    [0, 6],
+                    [7, 9]
                 ]);
             }
         });
@@ -96,9 +161,9 @@ test.describe("FreeBlocks", test => {
                     Assert.strictEqual(location, 4);
                 },
                 "should return the correct free blocks"(_, { freeBlocks }) {
-                    Assert.deepStrictEqual(freeBlocks.getFreeBlocks(), [
-                        [5, 6],
-                        [8, null]
+                    Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), [
+                        [0, 5],
+                        [6, 8]
                     ]);
                 }
             }
@@ -119,8 +184,8 @@ test.describe("FreeBlocks", test => {
                     Assert.strictEqual(location, 5);
                 },
                 "should return the correct free blocks"(_, { freeBlocks }) {
-                    Assert.deepStrictEqual(freeBlocks.getFreeBlocks(), [
-                        [8, null]
+                    Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), [
+                        [0, 8]
                     ]);
                 }
             }
@@ -140,8 +205,8 @@ test.describe("FreeBlocks", test => {
                     Assert.strictEqual(location, 5);
                 },
                 "should return the correct free blocks"(_, { freeBlocks }) {
-                    Assert.deepStrictEqual(freeBlocks.getFreeBlocks(), [
-                        [6, null]
+                    Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), [
+                        [0, 6]
                     ]);
                 }
             }
@@ -162,9 +227,9 @@ test.describe("FreeBlocks", test => {
                     Assert.strictEqual(location, 8);
                 },
                 "should return the correct free blocks"(_, { freeBlocks }) {
-                    Assert.deepStrictEqual(freeBlocks.getFreeBlocks(), [
-                        [4, 6],
-                        [11, null]
+                    Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), [
+                        [0, 4],
+                        [6, 11]
                     ]);
                 }
             }
@@ -191,266 +256,270 @@ test.describe("FreeBlocks", test => {
                     Assert.strictEqual(secondLocation, 9);
                 },
                 "should return the correct free blocks"(_, { freeBlocks }) {
-                    Assert.deepStrictEqual(freeBlocks.getFreeBlocks(), [
-                        [11, null]
+                    Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), [
+                        [0, 11]
                     ]);
                 }
             }
         });
     });
     test.describe("free", test => {
-        test("should free before the first next block without touching it", {
-            ARRANGE() {
-                const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
-                allocation.add(0, 10);
-                allocation.add(20, 30);
-                allocation.add(40, 50);
-                return { freeBlocks }
-            },
-            ACT({ freeBlocks }) {
-                return freeBlocks.free(5, 6);
-            },
-            ASSERTS: {
-                "should return null"(res) {
-                    Assert.strictEqual(res, null);
+        test.describe("before first block", test => {
+            test("not overlapping the end [free]...[block]", {
+                ARRANGE() {
+                    const freeBlocks = new FreeBlocks();
+                    const allocation = freeBlocks.updateAllocation();
+                    allocation.add(0, 10);
+                    allocation.add(20, 30);
+                    allocation.add(40, 50);
+                    return { freeBlocks }
                 },
-                "should return the correct free blocks"(_, { freeBlocks }) {
-                    Assert.deepStrictEqual(freeBlocks.getFreeBlocks(), [
-                        [5, 6],
-                        [10, 20],
-                        [30, 40],
-                        [50, null]
-                    ]);
+                ACT({ freeBlocks }) {
+                    return freeBlocks.free(5, 6);
+                },
+                ASSERTS: {
+                    "should return null"(res) {
+                        Assert.strictEqual(res, null);
+                    },
+                    "should return the correct free blocks"(_, { freeBlocks }) {
+                        Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), [
+                            [0, 5],
+                            [6, 10],
+                            [20, 30],
+                            [40, 50]
+                        ]);
+                    }
                 }
-            }
+            });
+            test("overlapping the end [free|block]", {
+                ARRANGE() {
+                    const freeBlocks = new FreeBlocks();
+                    const allocation = freeBlocks.updateAllocation();
+                    allocation.add(0, 10);
+                    allocation.add(20, 30);
+                    allocation.add(40, 50);
+                    return { freeBlocks }
+                },
+                ACT({ freeBlocks }) {
+                    return freeBlocks.free(5, 10);
+                },
+                ASSERTS: {
+                    "should return null"(res) {
+                        Assert.strictEqual(res, null);
+                    },
+                    "should return the correct free blocks"(_, { freeBlocks }) {
+                        Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), [
+                            [0, 5],
+                            [20, 30],
+                            [40, 50]
+                        ]);
+                    }
+                }
+            });
         });
-        test("should free before the first next block touching it", {
-            ARRANGE() {
-                const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
-                allocation.add(0, 10);
-                allocation.add(20, 30);
-                allocation.add(40, 50);
-                return { freeBlocks }
-            },
-            ACT({ freeBlocks }) {
-                return freeBlocks.free(5, 10);
-            },
-            ASSERTS: {
-                "should return null"(res) {
-                    Assert.strictEqual(res, null);
+        test.describe("between blocks", test => {
+            test("not overlapping the start nor end [prev]...[free]...[next]", {
+                ARRANGE() {
+                    const freeBlocks = new FreeBlocks();
+                    const allocation = freeBlocks.updateAllocation();
+                    allocation.add(0, 10);
+                    allocation.add(20, 30);
+                    allocation.add(40, 50);
+                    return { freeBlocks }
                 },
-                "should return the correct free blocks"(_, { freeBlocks }) {
-                    Assert.deepStrictEqual(freeBlocks.getFreeBlocks(), [
-                        [5, 20],
-                        [30, 40],
-                        [50, null]
-                    ]);
+                ACT({ freeBlocks }) {
+                    return freeBlocks.free(22, 25);
+                },
+                ASSERTS: {
+                    "should return null"(res) {
+                        Assert.strictEqual(res, null);
+                    },
+                    "should return the correct free blocks"(_, { freeBlocks }) {
+                        Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), [
+                            [0, 10],
+                            [20, 22],
+                            [25, 30],
+                            [40, 50]
+                        ]);
+                    }
                 }
-            }
+            });
+            test("overlapping the start but not end [prev|free]...[next]", {
+                ARRANGE() {
+                    const freeBlocks = new FreeBlocks();
+                    const allocation = freeBlocks.updateAllocation();
+                    allocation.add(0, 10);
+                    allocation.add(20, 30);
+                    allocation.add(40, 50);
+                    return { freeBlocks }
+                },
+                ACT({ freeBlocks }) {
+                    return freeBlocks.free(20, 25);
+                },
+                ASSERTS: {
+                    "should return null"(res) {
+                        Assert.strictEqual(res, null);
+                    },
+                    "should return the correct free blocks"(_, { freeBlocks }) {
+                        Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), [
+                            [0, 10],
+                            [25, 30],
+                            [40, 50]
+                        ]);
+                    }
+                }
+            });
+            test("not overlapping the start but overlapping the end [prev]...[free|next]", {
+                ARRANGE() {
+                    const freeBlocks = new FreeBlocks();
+                    const allocation = freeBlocks.updateAllocation();
+                    allocation.add(0, 10);
+                    allocation.add(20, 30);
+                    allocation.add(40, 50);
+                    return { freeBlocks }
+                },
+                ACT({ freeBlocks }) {
+                    return freeBlocks.free(25, 30);
+                },
+                ASSERTS: {
+                    "should return null"(res) {
+                        Assert.strictEqual(res, null);
+                    },
+                    "should return the correct free blocks"(_, { freeBlocks }) {
+                        Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), [
+                            [0, 10],
+                            [20, 25],
+                            [40, 50]
+                        ]);
+                    }
+                }
+            });
+            test("overlapping the start and end [prev|free|next]", {
+                ARRANGE() {
+                    const freeBlocks = new FreeBlocks();
+                    const allocation = freeBlocks.updateAllocation();
+                    allocation.add(0, 10);
+                    allocation.add(20, 30);
+                    allocation.add(40, 50);
+                    return { freeBlocks }
+                },
+                ACT({ freeBlocks }) {
+                    return freeBlocks.free(20, 30);
+                },
+                ASSERTS: {
+                    "should return null"(res) {
+                        Assert.strictEqual(res, null);
+                    },
+                    "should return the correct free blocks"(_, { freeBlocks }) {
+                        Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), [
+                            [0, 10],
+                            [40, 50]
+                        ]);
+                    }
+                }
+            });
         });
-        test("should free between blocks without touching the start nor end", {
-            ARRANGE() {
-                const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
-                allocation.add(0, 10);
-                allocation.add(20, 30);
-                allocation.add(40, 50);
-                return { freeBlocks }
-            },
-            ACT({ freeBlocks }) {
-                return freeBlocks.free(22, 25);
-            },
-            ASSERTS: {
-                "should return null"(res) {
-                    Assert.strictEqual(res, null);
+        test.describe("before the end", test => {
+            test("not overlapping the start nor end [prev]...[free]...[end", {
+                ARRANGE() {
+                    const freeBlocks = new FreeBlocks();
+                    const allocation = freeBlocks.updateAllocation();
+                    allocation.add(0, 10);
+                    allocation.add(20, 30);
+                    allocation.add(40, 50);
+                    return { freeBlocks }
                 },
-                "should return the correct free blocks"(_, { freeBlocks }) {
-                    Assert.deepStrictEqual(freeBlocks.getFreeBlocks(), [
-                        [10, 20],
-                        [22, 25],
-                        [30, 40],
-                        [50, null]
-                    ]);
-                }
-            }
-        });
-        test("should free between blocks touching the start but not end", {
-            ARRANGE() {
-                const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
-                allocation.add(0, 10);
-                allocation.add(20, 30);
-                allocation.add(40, 50);
-                return { freeBlocks }
-            },
-            ACT({ freeBlocks }) {
-                return freeBlocks.free(20, 25);
-            },
-            ASSERTS: {
-                "should return null"(res) {
-                    Assert.strictEqual(res, null);
+                ACT({ freeBlocks }) {
+                    return freeBlocks.free(43, 45);
                 },
-                "should return the correct free blocks"(_, { freeBlocks }) {
-                    Assert.deepStrictEqual(freeBlocks.getFreeBlocks(), [
-                        [10, 25],
-                        [30, 40],
-                        [50, null]
-                    ]);
+                ASSERTS: {
+                    "should return null"(res) {
+                        Assert.strictEqual(res, null);
+                    },
+                    "should return the correct free blocks"(_, { freeBlocks }) {
+                        Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), [
+                            [0, 10],
+                            [20, 30],
+                            [40, 43],
+                            [45, 50]
+                        ]);
+                    }
                 }
-            }
-        });
-        test("should free between blocks without touching the start but touching the end", {
-            ARRANGE() {
-                const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
-                allocation.add(0, 10);
-                allocation.add(20, 30);
-                allocation.add(40, 50);
-                return { freeBlocks }
-            },
-            ACT({ freeBlocks }) {
-                return freeBlocks.free(25, 30);
-            },
-            ASSERTS: {
-                "should return null"(res) {
-                    Assert.strictEqual(res, null);
+            });
+            test("overlapping the start but not overlapping the end [prev|free]...[end", {
+                ARRANGE() {
+                    const freeBlocks = new FreeBlocks();
+                    const allocation = freeBlocks.updateAllocation();
+                    allocation.add(0, 10);
+                    allocation.add(20, 30);
+                    allocation.add(40, 50);
+                    return { freeBlocks }
                 },
-                "should return the correct free blocks"(_, { freeBlocks }) {
-                    Assert.deepStrictEqual(freeBlocks.getFreeBlocks(), [
-                        [10, 20],
-                        [25, 40],
-                        [50, null]
-                    ]);
-                }
-            }
-        });
-        test("should free at the end of the blocks without touching the end", {
-            ARRANGE() {
-                const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
-                allocation.add(0, 10);
-                allocation.add(20, 30);
-                allocation.add(40, 50);
-                return { freeBlocks }
-            },
-            ACT({ freeBlocks }) {
-                return freeBlocks.free(43, 46);
-            },
-            ASSERTS: {
-                "should return null"(res) {
-                    Assert.strictEqual(res, null);
+                ACT({ freeBlocks }) {
+                    return freeBlocks.free(40, 45);
                 },
-                "should return the correct free blocks"(_, { freeBlocks }) {
-                    Assert.deepStrictEqual(freeBlocks.getFreeBlocks(), [
-                        [10, 20],
-                        [30, 40],
-                        [43, 46],
-                        [50, null]
-                    ]);
+                ASSERTS: {
+                    "should return the new ending value"(res) {
+                        Assert.strictEqual(res, null);
+                    },
+                    "should return the correct free blocks"(_, { freeBlocks }) {
+                        Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), [
+                            [0, 10],
+                            [20, 30],
+                            [45, 50]
+                        ]);
+                    }
                 }
-            }
-        });
-        test("should free before the last free block without touching the end", {
-            ARRANGE() {
-                const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
-                allocation.add(0, 10);
-                allocation.add(20, 30);
-                allocation.add(40, 50);
-                return { freeBlocks }
-            },
-            ACT({ freeBlocks }) {
-                return freeBlocks.free(40, 45);
-            },
-            ASSERTS: {
-                "should return the new ending value"(res) {
-                    Assert.strictEqual(res, null);
+            });
+            test("not overlapping the start but overlapping the end [prev]...[free|end", {
+                ARRANGE() {
+                    const freeBlocks = new FreeBlocks();
+                    const allocation = freeBlocks.updateAllocation();
+                    allocation.add(0, 10);
+                    allocation.add(20, 30);
+                    allocation.add(40, 50);
+                    return { freeBlocks }
                 },
-                "should return the correct free blocks"(_, { freeBlocks }) {
-                    Assert.deepStrictEqual(freeBlocks.getFreeBlocks(), [
-                        [10, 20],
-                        [30, 45],
-                        [50, null]
-                    ]);
-                }
-            }
-        });
-        test("should free before the last free block touching the end", {
-            ARRANGE() {
-                const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
-                allocation.add(0, 10);
-                allocation.add(20, 30);
-                allocation.add(40, 50);
-                return { freeBlocks }
-            },
-            ACT({ freeBlocks }) {
-                return freeBlocks.free(40, 50);
-            },
-            ASSERTS: {
-                "should return the new ending value"(res) {
-                    Assert.strictEqual(res, 30);
+                ACT({ freeBlocks }) {
+                    return freeBlocks.free(45, 50);
                 },
-                "should return the correct free blocks"(_, { freeBlocks }) {
-                    Assert.deepStrictEqual(freeBlocks.getFreeBlocks(), [
-                        [10, 20],
-                        [30, null]
-                    ]);
+                ASSERTS: {
+                    "should return the new ending value"(res) {
+                        Assert.strictEqual(res, 45);
+                    },
+                    "should return the correct free blocks"(_, { freeBlocks }) {
+                        Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), [
+                            [0, 10],
+                            [20, 30],
+                            [40, 45]
+                        ]);
+                    }
                 }
-            }
-        });
-        test("should free at the end of the blocks without touching the end", {
-            ARRANGE() {
-                const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
-                allocation.add(0, 10);
-                allocation.add(20, 30);
-                allocation.add(40, 50);
-                return { freeBlocks }
-            },
-            ACT({ freeBlocks }) {
-                return freeBlocks.free(43, 46);
-            },
-            ASSERTS: {
-                "should return null"(res) {
-                    Assert.strictEqual(res, null);
+            });
+            test("overlapping the start and end [prev|free|end", {
+                ARRANGE() {
+                    const freeBlocks = new FreeBlocks();
+                    const allocation = freeBlocks.updateAllocation();
+                    allocation.add(0, 10);
+                    allocation.add(20, 30);
+                    allocation.add(40, 50);
+                    return { freeBlocks }
                 },
-                "should return the correct free blocks"(_, { freeBlocks }) {
-                    Assert.deepStrictEqual(freeBlocks.getFreeBlocks(), [
-                        [10, 20],
-                        [30, 40],
-                        [43, 46],
-                        [50, null]
-                    ]);
-                }
-            }
-        });
-        test("should free at the end of the blocks touching the end", {
-            ARRANGE() {
-                const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
-                allocation.add(0, 10);
-                allocation.add(20, 30);
-                allocation.add(40, 50);
-                return { freeBlocks }
-            },
-            ACT({ freeBlocks }) {
-                return freeBlocks.free(43, 50);
-            },
-            ASSERTS: {
-                "should return the new ending value"(res) {
-                    Assert.strictEqual(res, 43);
+                ACT({ freeBlocks }) {
+                    return freeBlocks.free(40, 50);
                 },
-                "should return the correct free blocks"(_, { freeBlocks }) {
-                    Assert.deepStrictEqual(freeBlocks.getFreeBlocks(), [
-                        [10, 20],
-                        [30, 40],
-                        [43, null]
-                    ]);
+                ASSERTS: {
+                    "should return the new ending value"(res) {
+                        Assert.strictEqual(res, 30);
+                    },
+                    "should return the correct free blocks"(_, { freeBlocks }) {
+                        Assert.deepStrictEqual(freeBlocks.getAllocatedBlocks(), [
+                            [0, 10],
+                            [20, 30]
+                        ]);
+                    }
                 }
-            }
+            });
         });
     });
 });
