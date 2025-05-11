@@ -63,10 +63,10 @@ export class Persistency {
                 }
                 while (true) {
                     const entryLocation = entriesReader.offset;
-                    if (!entriesReader.read(entryHeaderBuffer, false)) {
-                        break;
-                    }
                     try {
+                        if (!entriesReader.read(entryHeaderBuffer, false)) {
+                            break;
+                        }
                         if (entryHeaderBuffer[EntryHeaderOffsets_V0.VERSION] !== 0) {
                             throw new Error("Invalid entry version");
                         }
@@ -124,16 +124,17 @@ export class Persistency {
                     }
                 }
             }
+            fd.entries.truncate(this._updateFreeEntryList());
+            fd.data.truncate(this._updateFreeDataList());
         } catch (e) {
-            this.close(); // free resources
             console.error(e);
             // TODO: log invalid persistency
             throw e;
+        } finally {
+            // Always close. Will reopen if needed
+            fd.close();
         }
-        fd.entries.truncate(this._updateFreeEntryList());
-        fd.data.truncate(this._updateFreeDataList());
         // Reopen as reaching EOF may close the files
-        fd.close();
         return openFiles({
             entriesFile: this.entriesFile,
             dataFile: this.dataFile

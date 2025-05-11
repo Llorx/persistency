@@ -3,7 +3,7 @@ import * as Assert from "assert";
 import * as Os from "os";
 import * as Path from "path";
 
-import test, { After } from "arrange-act-assert";
+import test, { After, asyncMonad } from "arrange-act-assert";
 
 import { Persistency, PersistencyContext, PersistencyOptions } from "./Persistency";
 import * as constants from "./constants";
@@ -404,6 +404,83 @@ test.describe("Persistency", test => {
                 },
                 async "should truncate data file"({ persistency }, { fileSizes }) {
                     Assert.strictEqual(await getFileSize(persistency.dataFile) < fileSizes.data, true);
+                }
+            }
+        });
+    });
+    test.describe("magic", test => {
+        test("magic is written to files", {
+            ACT(_, after) {
+                return newPersistency(after);
+            },
+            ASSERTS: {
+                async "should write magic in entries file"({ persistency }) {
+                    Assert.deepStrictEqual((await Fs.readFile(persistency.entriesFile)).subarray(0, constants.MAGIC.length), constants.MAGIC);
+                },
+                async "should write magic in data file"({ persistency }) {
+                    Assert.deepStrictEqual((await Fs.readFile(persistency.dataFile)).subarray(0, constants.MAGIC.length), constants.MAGIC);
+                }
+            }
+        });
+        test("should not load if entries magic is invalid", {
+            async ARRANGE(after) {
+                const { persistency, folder } = await newPersistency(after);
+                persistency.set("test0", value1);
+                persistency.close();
+                const buffer = await Fs.readFile(persistency.entriesFile);
+                buffer[0]++; // First magic character
+                await Fs.writeFile(persistency.entriesFile, buffer);
+                return { folder };
+            },
+            ACT({ folder }, after) {
+                return asyncMonad(() => newPersistency(after, { folder }));
+            },
+            ASSERT(res) {
+                res.should.error({
+                    message: "Entries file is not a persistency one"
+                });
+            }
+        });
+        test("should not load if data magic is invalid", {
+            async ARRANGE(after) {
+                const { persistency, folder } = await newPersistency(after);
+                persistency.set("test0", value1);
+                persistency.close();
+                const buffer = await Fs.readFile(persistency.dataFile);
+                buffer[0]++; // First magic character
+                await Fs.writeFile(persistency.dataFile, buffer);
+                return { folder };
+            },
+            ACT({ folder }, after) {
+                return asyncMonad(() => newPersistency(after, { folder }));
+            },
+            ASSERT(res) {
+                res.should.error({
+                    message: "Data file is not a persistency one"
+                });
+            }
+        });
+    });
+    test.describe("invalid data", test => {
+        test("should invalidate entry of partial entry is found", {
+            async ARRANGE(after) {
+                const { persistency, folder } = await newPersistency(after);
+                persistency.set("test0", value1);
+                persistency.set("test1", value2);
+                persistency.close();
+                const fileSize = await getFileSize(persistency.entriesFile);
+                await Fs.truncate(persistency.entriesFile, fileSize - 2); // partial write last entry
+                return { folder };
+            },
+            ACT({ folder }, after) {
+                return newPersistency(after, { folder });
+            },
+            ASSERTS: {
+                "should have entry 0"({ persistency }) {
+                    Assert.deepStrictEqual(persistency.get("test0"), value1);
+                },
+                "should not have entry 1"({ persistency }) {
+                    Assert.strictEqual(persistency.get("test1"), null);
                 }
             }
         });

@@ -18,7 +18,7 @@
     "build-debug": "npm run clean && npx tsc -p tsconfig.json",
     "build-test": "npm run clean && npx tsc -p tsconfig.test.json",
     "test": "npx aaa",
-    "clean": "node -e \"require('fs').rm('lib', {recursive: true}, O_o => {})\""
+    "clean": "node -e \"require('fs').rm('lib', {recursive: true, force:true}, O_o => {})\""
   },
   "author": "Llorx",
   "license": "MIT",

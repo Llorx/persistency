@@ -1,13 +1,13 @@
 import * as Fs from "fs";
 import * as Crypto from "crypto";
 
-function read(fd:number, buffer:Buffer, position:number, errorOnEOF:boolean) {
+function read(fd:number, buffer:Buffer, position:number, emptyBufferError:boolean) {
     let offset = 0;
     do {
-        const bytesRead = Fs.readSync(fd, buffer, offset, buffer.length - offset, position);
+        const bytesRead = Fs.readSync(fd, buffer, offset, buffer.length - offset, position + offset);
         offset += bytesRead;
         if (bytesRead === 0) {
-            if (errorOnEOF || offset > 0) {
+            if (emptyBufferError || offset > 0) {
                 throw new Error("Invalid file");
             }
             return false;
@@ -17,6 +17,7 @@ function read(fd:number, buffer:Buffer, position:number, errorOnEOF:boolean) {
 }
 function reader(fd:number) {
     let offset = 0;
+    let done = false;
     return {
         get offset() {
             return offset;
@@ -24,10 +25,18 @@ function reader(fd:number) {
         advance(count:number) {
             offset += count;
         },
-        read(buffer:Buffer, errorOnEOF:boolean) {
-            const result = read(fd, buffer, offset, errorOnEOF);
-            offset += buffer.length;
-            return result;
+        read(buffer:Buffer, emptyBufferError:boolean) {
+            if (done) {
+                return false;
+            }
+            try {
+                const result = read(fd, buffer, offset, emptyBufferError);
+                offset += buffer.length;
+                return result;
+            } catch (e) {
+                done = true;
+                throw e;
+            }
         }
     };
 }
