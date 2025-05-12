@@ -9,7 +9,7 @@ test.describe("FreeBlocks", test => {
         test("should return allocated blocks", {
             ARRANGE() {
                 const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
+                const allocation = freeBlocks.setAllocation();
                 allocation.add(0, 4);
                 allocation.add(6, 8);
                 allocation.add(8, 12);
@@ -30,7 +30,7 @@ test.describe("FreeBlocks", test => {
         test("should return allocated blocks when first bytes are not allocated", {
             ARRANGE() {
                 const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
+                const allocation = freeBlocks.setAllocation();
                 allocation.add(6, 8);
                 allocation.add(8, 12);
                 allocation.add(13, 14);
@@ -61,7 +61,7 @@ test.describe("FreeBlocks", test => {
         test("should return only the first block if only one allocation happened at start", {
             ARRANGE() {
                 const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
+                const allocation = freeBlocks.setAllocation();
                 allocation.add(0, 4);
                 return { freeBlocks }
             },
@@ -77,7 +77,7 @@ test.describe("FreeBlocks", test => {
         test("should return only the first block if only one allocation happened at the middle", {
             ARRANGE() {
                 const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
+                const allocation = freeBlocks.setAllocation();
                 allocation.add(5, 6);
                 return { freeBlocks }
             },
@@ -95,7 +95,7 @@ test.describe("FreeBlocks", test => {
         test("should add blocks", {
             ARRANGE() {
                 const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
+                const allocation = freeBlocks.setAllocation();
                 return { allocation, freeBlocks }
             },
             ACT({ allocation }) {
@@ -112,7 +112,7 @@ test.describe("FreeBlocks", test => {
         test("should connect contiguous blocks", {
             ARRANGE() {
                 const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
+                const allocation = freeBlocks.setAllocation();
                 return { allocation, freeBlocks }
             },
             ACT({ allocation }) {
@@ -130,7 +130,7 @@ test.describe("FreeBlocks", test => {
         test("should finish with the last free value", {
             ARRANGE() {
                 const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
+                const allocation = freeBlocks.setAllocation();
                 allocation.add(0, 4);
                 allocation.add(6, 8);
                 allocation.add(8, 9);
@@ -148,7 +148,7 @@ test.describe("FreeBlocks", test => {
         test("should extend first hole where it fits", {
             ARRANGE() {
                 const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
+                const allocation = freeBlocks.setAllocation();
                 allocation.add(0, 4);
                 allocation.add(6, 8);
                 return { freeBlocks }
@@ -171,7 +171,7 @@ test.describe("FreeBlocks", test => {
         test("should merge when the hole is exact the requested size", {
             ARRANGE() {
                 const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
+                const allocation = freeBlocks.setAllocation();
                 allocation.add(0, 5);
                 allocation.add(6, 8);
                 return { freeBlocks }
@@ -193,7 +193,7 @@ test.describe("FreeBlocks", test => {
         test("should extend the last free block", {
             ARRANGE() {
                 const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
+                const allocation = freeBlocks.setAllocation();
                 allocation.add(0, 5);
                 return { freeBlocks }
             },
@@ -214,7 +214,7 @@ test.describe("FreeBlocks", test => {
         test("should skip holes bigger than needed", {
             ARRANGE() {
                 const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
+                const allocation = freeBlocks.setAllocation();
                 allocation.add(0, 4);
                 allocation.add(6, 8);
                 return { freeBlocks }
@@ -237,7 +237,7 @@ test.describe("FreeBlocks", test => {
         test("should not return the same location 2 times", {
             ARRANGE() {
                 const freeBlocks = new FreeBlocks();
-                const allocation = freeBlocks.updateAllocation();
+                const allocation = freeBlocks.setAllocation();
                 allocation.add(0, 4);
                 allocation.add(6, 8);
                 allocation.add(8, 9);
@@ -268,7 +268,7 @@ test.describe("FreeBlocks", test => {
             test("not overlapping the end [free]...[block]", {
                 ARRANGE() {
                     const freeBlocks = new FreeBlocks();
-                    const allocation = freeBlocks.updateAllocation();
+                    const allocation = freeBlocks.setAllocation();
                     allocation.add(0, 10);
                     allocation.add(20, 30);
                     allocation.add(40, 50);
@@ -294,7 +294,7 @@ test.describe("FreeBlocks", test => {
             test("overlapping the end [free|block]", {
                 ARRANGE() {
                     const freeBlocks = new FreeBlocks();
-                    const allocation = freeBlocks.updateAllocation();
+                    const allocation = freeBlocks.setAllocation();
                     allocation.add(0, 10);
                     allocation.add(20, 30);
                     allocation.add(40, 50);
@@ -321,7 +321,7 @@ test.describe("FreeBlocks", test => {
             test("not overlapping the start nor end [prev]...[free]...[next]", {
                 ARRANGE() {
                     const freeBlocks = new FreeBlocks();
-                    const allocation = freeBlocks.updateAllocation();
+                    const allocation = freeBlocks.setAllocation();
                     allocation.add(0, 10);
                     allocation.add(20, 30);
                     allocation.add(40, 50);
@@ -347,7 +347,7 @@ test.describe("FreeBlocks", test => {
             test("overlapping the start but not end [prev|free]...[next]", {
                 ARRANGE() {
                     const freeBlocks = new FreeBlocks();
-                    const allocation = freeBlocks.updateAllocation();
+                    const allocation = freeBlocks.setAllocation();
                     allocation.add(0, 10);
                     allocation.add(20, 30);
                     allocation.add(40, 50);
@@ -372,7 +372,7 @@ test.describe("FreeBlocks", test => {
             test("not overlapping the start but overlapping the end [prev]...[free|next]", {
                 ARRANGE() {
                     const freeBlocks = new FreeBlocks();
-                    const allocation = freeBlocks.updateAllocation();
+                    const allocation = freeBlocks.setAllocation();
                     allocation.add(0, 10);
                     allocation.add(20, 30);
                     allocation.add(40, 50);
@@ -397,7 +397,7 @@ test.describe("FreeBlocks", test => {
             test("overlapping the start and end [prev|free|next]", {
                 ARRANGE() {
                     const freeBlocks = new FreeBlocks();
-                    const allocation = freeBlocks.updateAllocation();
+                    const allocation = freeBlocks.setAllocation();
                     allocation.add(0, 10);
                     allocation.add(20, 30);
                     allocation.add(40, 50);
@@ -423,7 +423,7 @@ test.describe("FreeBlocks", test => {
             test("not overlapping the start nor end [prev]...[free]...[end", {
                 ARRANGE() {
                     const freeBlocks = new FreeBlocks();
-                    const allocation = freeBlocks.updateAllocation();
+                    const allocation = freeBlocks.setAllocation();
                     allocation.add(0, 10);
                     allocation.add(20, 30);
                     allocation.add(40, 50);
@@ -449,7 +449,7 @@ test.describe("FreeBlocks", test => {
             test("overlapping the start but not overlapping the end [prev|free]...[end", {
                 ARRANGE() {
                     const freeBlocks = new FreeBlocks();
-                    const allocation = freeBlocks.updateAllocation();
+                    const allocation = freeBlocks.setAllocation();
                     allocation.add(0, 10);
                     allocation.add(20, 30);
                     allocation.add(40, 50);
@@ -474,7 +474,7 @@ test.describe("FreeBlocks", test => {
             test("not overlapping the start but overlapping the end [prev]...[free|end", {
                 ARRANGE() {
                     const freeBlocks = new FreeBlocks();
-                    const allocation = freeBlocks.updateAllocation();
+                    const allocation = freeBlocks.setAllocation();
                     allocation.add(0, 10);
                     allocation.add(20, 30);
                     allocation.add(40, 50);
@@ -499,7 +499,7 @@ test.describe("FreeBlocks", test => {
             test("overlapping the start and end [prev|free|end", {
                 ARRANGE() {
                     const freeBlocks = new FreeBlocks();
-                    const allocation = freeBlocks.updateAllocation();
+                    const allocation = freeBlocks.setAllocation();
                     allocation.add(0, 10);
                     allocation.add(20, 30);
                     allocation.add(40, 50);

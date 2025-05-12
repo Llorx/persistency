@@ -13,9 +13,13 @@ export class FreeBlocks {
         end: null,
         next: null
     };
-    updateAllocation() {
+    setAllocation() {
         // Assume updating in ascending order, so "next" is always going to be the last block
-        let next = this._next;
+        let next:FreeBlock = this._next = {
+            start: 0,
+            end: null,
+            next: null
+        };
         return {
             add(start:number, end:number) {
                 if (next.start === start) {

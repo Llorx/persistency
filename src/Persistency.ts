@@ -1,6 +1,6 @@
 import * as Path from "path";
 
-import { openFiles, sha256 } from "./utils";
+import { openFiles, shake128 } from "./utils";
 import { FreeBlocks } from "./FreeBlocks";
 import { EMPTY_ENTRY, Bytes, EntryHeaderOffsets_V0, EntryOffsets_V0, MAGIC, Values } from "./constants";
 
@@ -16,7 +16,7 @@ type Entry = {
     dataLocation:number;
     valueLocation:number;
     valueSize:number;
-    ts:number;
+    dataVersion:number;
     purging:boolean;
 };
 export class Persistency {
@@ -25,7 +25,7 @@ export class Persistency {
     readonly entriesFile;
     readonly dataFile;
     readonly reclaimTimeout;
-    private _data = new Map<string, Entry[]>();
+    private _data = new Map<string, [Entry, ...Entry[]]>();
     private _purgeEntries:{key:string; entry:Entry; ts:number}[] = [];
     private _freeEntryBlocks = new FreeBlocks();
     private _freeDataBlocks = new FreeBlocks();
@@ -68,24 +68,26 @@ export class Persistency {
                             break;
                         }
                         if (entryHeaderBuffer[EntryHeaderOffsets_V0.VERSION] !== 0) {
+                            // TODO: Test this
                             throw new Error("Invalid entry version");
                         }
-                        const storedEntryHash = entryHeaderBuffer.subarray(EntryHeaderOffsets_V0.ENTRY_HASH, EntryHeaderOffsets_V0.ENTRY_HASH + Bytes.SHA_256);
+                        const storedEntryHash = entryHeaderBuffer.subarray(EntryHeaderOffsets_V0.ENTRY_HASH, EntryHeaderOffsets_V0.ENTRY_HASH + Bytes.SHAKE_128);
                         entriesReader.read(entryBuffer, true);
-                        const entryHash = sha256(entryBuffer);
+                        const entryHash = shake128(entryBuffer);
                         if (!entryHash.equals(storedEntryHash)) {
                             throw new Error("Invalid entry hash");
                         }
                         const dataLocation = entryBuffer.readUIntBE(EntryOffsets_V0.LOCATION, Bytes.UINT_48) + (entryBuffer[EntryOffsets_V0.LOCATION + 6] * Values.UINT_48_ROLLOVER); // Maximum read value in nodejs is 6 bytes, so we need a workaround for 7 bytes
                         if (dataLocation > 0) {
-                            const storedDataHash = entryBuffer.subarray(EntryOffsets_V0.DATA_HASH, EntryOffsets_V0.DATA_HASH + Bytes.SHA_256);
-                            const ts = entryBuffer.readUInt32BE(EntryOffsets_V0.TS);
+                            const storedDataHash = entryBuffer.subarray(EntryOffsets_V0.DATA_HASH, EntryOffsets_V0.DATA_HASH + Bytes.SHAKE_128);
+                            const dataVersion = entryBuffer.readUInt32BE(EntryOffsets_V0.DATA_VERSION);
                             const keySize = entryBuffer.readUInt32BE(EntryOffsets_V0.KEY_SIZE);
-                            const valueSize = entryBuffer.readUIntBE(EntryOffsets_V0.VALUE_SIZE, Bytes.UINT_48);
+                            const valueSize = entryBuffer.readUInt32BE(EntryOffsets_V0.VALUE_SIZE);
                             const dataBuffer = Buffer.allocUnsafe(keySize + valueSize);
                             fd.data.read(dataBuffer, dataLocation, true);
-                            const dataHash = sha256(dataBuffer);
+                            const dataHash = shake128(dataBuffer);
                             if (!dataHash.equals(storedDataHash)) {
+                                // TODO: Test this
                                 throw new Error("Invalid data hash");
                             }
                             const key = (dataBuffer as any).utf8Slice(0, keySize); // small optimization non-documented methods
@@ -94,7 +96,7 @@ export class Persistency {
                                 dataLocation: dataLocation,
                                 valueLocation: dataLocation + keySize,
                                 valueSize: valueSize,
-                                ts: ts,
+                                dataVersion: dataVersion,
                                 purging: false
                             };
                             const entries = this._data.get(key);
@@ -231,19 +233,19 @@ export class Persistency {
         this._checkPurge();
         const entries = this._data.get(key);
         const keyBuffer = Buffer.from(key);
-        const dataHash = sha256(keyBuffer, value);
+        const dataHash = shake128(keyBuffer, value);
         const dataLocation = this._getFreeDataLocation(keyBuffer.length + value.length);
         const entry:Entry = {
             location: this._getFreeEntryLocation(),
             dataLocation: dataLocation,
             valueLocation: dataLocation + keyBuffer.length,
             valueSize: value.length,
-            ts: 0,
+            dataVersion: 0,
             purging: false
         };
         if (entries) {
             const lastEntry = entries[entries.length - 1];
-            entry.ts = (lastEntry.ts + 1) & Values.UINT_32 >>> 0;
+            entry.dataVersion = (lastEntry.dataVersion + 1) & Values.UINT_32 >>> 0;
             if (this.reclaimTimeout > 0) {
                 this._purgeEntry(key, lastEntry);
             }
@@ -261,10 +263,10 @@ export class Persistency {
         entryBuffer[EntryOffsets_V0.LOCATION + 6] = dataLocationByte7;
 
         dataHash.copy(entryBuffer, EntryOffsets_V0.DATA_HASH);
-        entryBuffer.writeUInt32BE(entry.ts, EntryOffsets_V0.TS);
+        entryBuffer.writeUInt32BE(entry.dataVersion, EntryOffsets_V0.DATA_VERSION);
         entryBuffer.writeUInt32BE(keyBuffer.length, EntryOffsets_V0.KEY_SIZE);
-        entryBuffer.writeUIntBE(value.length, EntryOffsets_V0.VALUE_SIZE, Bytes.UINT_48);
-        const entryHash = sha256(entryBuffer);
+        entryBuffer.writeUInt32BE(value.length, EntryOffsets_V0.VALUE_SIZE);
+        const entryHash = shake128(entryBuffer);
         entryHash.copy(entryHeaderBuffer, EntryHeaderOffsets_V0.ENTRY_HASH);
 
         this._fd.data.write(keyBuffer, dataLocation);

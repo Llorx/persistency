@@ -40,8 +40,8 @@ function reader(fd:number) {
         }
     };
 }
-export function sha256(buffer:Buffer, buffer2?:Buffer) {
-    const hash = Crypto.createHash("sha256");
+export function shake128(buffer:Buffer, buffer2?:Buffer) {
+    const hash = Crypto.createHash("shake128");
     hash.update(buffer);
     if (buffer2) {
         hash.update(buffer2);

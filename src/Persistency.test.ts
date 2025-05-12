@@ -7,7 +7,7 @@ import test, { After, asyncMonad } from "arrange-act-assert";
 
 import { Persistency, PersistencyContext, PersistencyOptions } from "./Persistency";
 import * as constants from "./constants";
-import { sha256 } from "./utils";
+import { shake128 } from "./utils";
 
 test.describe("Persistency", test => {
     // helpers
@@ -26,16 +26,16 @@ test.describe("Persistency", test => {
             end: constants.MAGIC.length + ((keyLength + value1.length) * (dataI + 1))
         };
     }
-    async function setValueTs(persistency:Pick<Persistency, "entriesFile">, entryI:number, ts:number) {
+    async function setValueDataVersion(persistency:Pick<Persistency, "entriesFile">, entryI:number, dataVersion:number) {
         const buffer = await Fs.readFile(persistency.entriesFile);
-        buffer.writeUint32BE(ts, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.SIZE + constants.EntryOffsets_V0.TS);
+        buffer.writeUint32BE(dataVersion, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.SIZE + constants.EntryOffsets_V0.DATA_VERSION);
         await hashEntry(persistency, entryI, buffer);
     }
     async function hashEntry(persistency:Pick<Persistency, "entriesFile">, entryI:number, buffer?:Buffer) {
         buffer = buffer || await Fs.readFile(persistency.entriesFile);
         const entryLocation = getEntryOffset(entryI);
         const entryDataLocation = entryLocation + constants.EntryHeaderOffsets_V0.SIZE;
-        const hash = sha256(buffer.subarray(entryDataLocation, entryDataLocation + constants.EntryOffsets_V0.SIZE));
+        const hash = shake128(buffer.subarray(entryDataLocation, entryDataLocation + constants.EntryOffsets_V0.SIZE));
         hash.copy(buffer, entryLocation + constants.EntryHeaderOffsets_V0.ENTRY_HASH);
         await Fs.writeFile(persistency.entriesFile, buffer);
     }
@@ -196,7 +196,7 @@ test.describe("Persistency", test => {
             persistency.set("test", value1);
             persistency.set("test", value2);
             persistency.close();
-            await setValueTs(persistency, 1, 0xFAFBFCFD); // Set value2 ts to 0xFAFBFCFD
+            await setValueDataVersion(persistency, 1, 0xFAFBFCFD); // Set value2 dataVersion to 0xFAFBFCFD
             return { folder };
         },
         ACT({ folder }, after) {
@@ -212,7 +212,7 @@ test.describe("Persistency", test => {
             persistency.set("test", value1);
             persistency.set("test", value2);
             persistency.close();
-            await setValueTs(persistency, 0, 0xFAFBFCFD); // Set value1 ts to 0xFAFBFCFD
+            await setValueDataVersion(persistency, 0, 0xFAFBFCFD); // Set value1 dataVersion to 0xFAFBFCFD
             return { folder };
         },
         ACT({ folder }, after) {
@@ -462,7 +462,7 @@ test.describe("Persistency", test => {
         });
     });
     test.describe("invalid data", test => {
-        test("should invalidate entry of partial entry is found", {
+        test("should invalidate entry if partial entry is found", {
             async ARRANGE(after) {
                 const { persistency, folder } = await newPersistency(after);
                 persistency.set("test0", value1);
@@ -493,4 +493,16 @@ test.describe("Persistency", test => {
     // Y ya testear todas las posibilidades al cargar (incluyendo que trunca)
     // Testear cuando se escriben datos parciales de absolutamente todos los bytes posibles (entrada y datos)
     // Testear esto además cuando se van a borrar entradas (bytes parciales escritos)
+
+    // Testear que los pending purge se vuelven a activar al recargar
+
+    // Testear este orden:
+    // - se hace set de entry 1
+    // - se hace set de entry 2
+    // - se hace set de entry 3
+    // - se hace set de entry 4
+    // - se elimina entry 2
+    // - se elimina entry 3
+    // - se añade entry 5 pero con un value mayor que el de entry2+entry3 para que el data esté escrito después de entry 4 pero el entry esté escrito donde entry 2
+    // Se recarga y se miran los espacios allocados (para testear el sort de data)
 });
