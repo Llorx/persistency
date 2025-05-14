@@ -83,8 +83,13 @@ test.describe("Persistency", test => {
         ACT({ persistency }) {
             persistency.set("test", value1);
         },
-        ASSERT(_, { persistency }) {
-            Assert.deepStrictEqual(persistency.get("test"), value1);
+        ASSERTS: {
+            "should have the data"(_, { persistency }) {
+                Assert.deepStrictEqual(persistency.get("test"), value1);
+            },
+            "should count the number of entries"(_, { persistency }) {
+                Assert.strictEqual(persistency.count(), 1);
+            }
         }
     });
     test("should load data from file", {
@@ -104,6 +109,9 @@ test.describe("Persistency", test => {
             },
             "should have second data"({ persistency }) {
                 Assert.deepStrictEqual(persistency.get("test2"), value2);
+            },
+            "should count the number of entries"({ persistency }) {
+                Assert.strictEqual(persistency.count(), 2);
             }
         }
     });
@@ -118,8 +126,13 @@ test.describe("Persistency", test => {
         ACT({ folder }, after) {
             return newPersistency(after, { folder });
         },
-        ASSERT({ persistency }) {
-            Assert.deepStrictEqual(persistency.get("test"), value2);
+        ASSERTS: {
+            "should have the correct data"({ persistency }) {
+                Assert.deepStrictEqual(persistency.get("test"), value2);
+            },
+            "should count the number of entries"({ persistency }) {
+                Assert.strictEqual(persistency.count(), 1);
+            }
         }
     });
     test("should update data without reloading", {
@@ -130,8 +143,13 @@ test.describe("Persistency", test => {
             persistency.set("test", value1);
             persistency.set("test", value2);
         },
-        ASSERT(_, { persistency }) {
-            Assert.deepStrictEqual(persistency.get("test"), value2);
+        ASSERTS: {
+            "should have the data data"(_, { persistency }) {
+                Assert.deepStrictEqual(persistency.get("test"), value2);
+            },
+            "should count the number of entries"(_, { persistency }) {
+                Assert.strictEqual(persistency.count(), 1);
+            }
         }
     });
     test("should delete data", {
@@ -150,6 +168,9 @@ test.describe("Persistency", test => {
             },
             "should have second data"(_, { persistency }) {
                 Assert.deepStrictEqual(persistency.get("test2"), value2);
+            },
+            "should count the number of entries"(_, { persistency }) {
+                Assert.strictEqual(persistency.count(), 1);
             }
         }
     });
@@ -171,6 +192,9 @@ test.describe("Persistency", test => {
             },
             "should have second data"({ persistency }) {
                 Assert.deepStrictEqual(persistency.get("test2"), value2);
+            },
+            "should count the number of entries"({ persistency }) {
+                Assert.strictEqual(persistency.count(), 1);
             }
         }
     });
@@ -186,8 +210,13 @@ test.describe("Persistency", test => {
         ACT({ folder }, after) {
             return newPersistency(after, { folder });
         },
-        ASSERT({ persistency }) {
-            Assert.strictEqual(persistency.get("test"), null);
+        ASSERTS: {
+            "should get the correct value for the entry"({ persistency }) {
+                Assert.strictEqual(persistency.get("test"), null);
+            },
+            "should count the number of entries"({ persistency }) {
+                Assert.strictEqual(persistency.count(), 0);
+            }
         }
     });
     test("should load wrapped around entry when second value is bigger", {
@@ -202,8 +231,13 @@ test.describe("Persistency", test => {
         ACT({ folder }, after) {
             return newPersistency(after, { folder });
         },
-        ASSERT({ persistency }) {
-            Assert.deepStrictEqual(persistency.get("test"), value1);
+        ASSERTS: {
+            "should get the correct value for the entry"({ persistency }) {
+                Assert.deepStrictEqual(persistency.get("test"), value1);
+            },
+            "should count the number of entries"({ persistency }) {
+                Assert.strictEqual(persistency.count(), 1);
+            }
         }
     });
     test("should load wrapped around entry when first value is bigger", {
@@ -218,8 +252,13 @@ test.describe("Persistency", test => {
         ACT({ folder }, after) {
             return newPersistency(after, { folder });
         },
-        ASSERT({ persistency }) {
-            Assert.deepStrictEqual(persistency.get("test"), value2);
+        ASSERTS: {
+            "should get the correct value for the entry"({ persistency }) {
+                Assert.deepStrictEqual(persistency.get("test"), value2);
+            },
+            "should count the number of entries"({ persistency }) {
+                Assert.strictEqual(persistency.count(), 1);
+            }
         }
     });
     test("should overwrite deleted entries", {
@@ -239,6 +278,9 @@ test.describe("Persistency", test => {
             },
             async "data file size must match"(_, { persistency, size }) {
                 Assert.strictEqual(await getFileSize(persistency.dataFile), size.data);
+            },
+            "should count the number of entries"(_, { persistency }) {
+                Assert.strictEqual(persistency.count(), 1);
             }
         }
     });
@@ -268,6 +310,12 @@ test.describe("Persistency", test => {
             "should overwrite data"(_, { persistency }) {
                 // If data is overwritten, then entry was deleted
                 Assert.deepStrictEqual(persistency.get("bbb"), value1);
+            },
+            "should count the number of entries"(_, { persistency }) {
+                Assert.strictEqual(persistency.count(), 2);
+            }
+        }
+    });
             }
         }
     });
@@ -288,8 +336,16 @@ test.describe("Persistency", test => {
             // if purge array is cleaned, it will not re-clean the set entries
             context.tick(100);
         },
-        ASSERT(_, { persistency }) {
-            Assert.deepStrictEqual(persistency.get("bbb"), value4);
+        ASSERTS: {
+            "should delete aaa"(_, { persistency }) {
+                Assert.deepStrictEqual(persistency.get("aaa"), null);
+            },
+            "should get the correct value for bbb"(_, { persistency }) {
+                Assert.deepStrictEqual(persistency.get("bbb"), value4);
+            },
+            "should count the number of entries"(_, { persistency }) {
+                Assert.strictEqual(persistency.count(), 1);
+            }
         }
     });
     test("should overwrite all deleted bytes from the same entry with multiple entries", {
@@ -312,6 +368,9 @@ test.describe("Persistency", test => {
             },
             async "data file size must match"(_, { persistency, size }) {
                 Assert.strictEqual(await getFileSize(persistency.dataFile), size.data);
+            },
+            "should count the number of entries"(_, { persistency }) {
+                Assert.strictEqual(persistency.count(), 2);
             }
         }
     });
@@ -351,6 +410,9 @@ test.describe("Persistency", test => {
                     [getDataOffset(5, 3).start, getDataOffset(5, 3).end], // keylength 5
                     [getDataOffset(5, 5).start, getDataOffset(5, 6).end] // keylength 5
                 ]);
+            },
+            "should count the number of entries"({ persistency }) {
+                Assert.strictEqual(persistency.count(), 4);
             }
         }
     });
@@ -377,6 +439,9 @@ test.describe("Persistency", test => {
                 },
                 async "should truncate data file"(_, { persistency, fileSizes }) {
                     Assert.strictEqual(await getFileSize(persistency.dataFile) < fileSizes.data, true);
+                },
+                "should count the number of entries"(_, { persistency }) {
+                    Assert.strictEqual(persistency.count(), 3);
                 }
             }
         });
@@ -404,6 +469,9 @@ test.describe("Persistency", test => {
                 },
                 async "should truncate data file"({ persistency }, { fileSizes }) {
                     Assert.strictEqual(await getFileSize(persistency.dataFile) < fileSizes.data, true);
+                },
+                "should count the number of entries"({ persistency }) {
+                    Assert.strictEqual(persistency.count(), 3);
                 }
             }
         });
@@ -481,28 +549,15 @@ test.describe("Persistency", test => {
                 },
                 "should not have entry 1"({ persistency }) {
                     Assert.strictEqual(persistency.get("test1"), null);
+                },
+                "should count the number of entries"({ persistency }) {
+                    Assert.strictEqual(persistency.count(), 1);
                 }
             }
         });
     });
     // TODO:
-    // Testear que count() contiene la cantidad de entradas correspondientes
-    // Testear que cuando se purga un dato, desaparece la entry correspondiente del array de entries
-    // Testear que el dato desaparece si tooodas las entradas han sido purgadas (no tengo claro cómo puede ocurrir esto)
-
     // Y ya testear todas las posibilidades al cargar (incluyendo que trunca)
     // Testear cuando se escriben datos parciales de absolutamente todos los bytes posibles (entrada y datos)
     // Testear esto además cuando se van a borrar entradas (bytes parciales escritos)
-
-    // Testear que los pending purge se vuelven a activar al recargar
-
-    // Testear este orden:
-    // - se hace set de entry 1
-    // - se hace set de entry 2
-    // - se hace set de entry 3
-    // - se hace set de entry 4
-    // - se elimina entry 2
-    // - se elimina entry 3
-    // - se añade entry 5 pero con un value mayor que el de entry2+entry3 para que el data esté escrito después de entry 4 pero el entry esté escrito donde entry 2
-    // Se recarga y se miran los espacios allocados (para testear el sort de data)
 });
