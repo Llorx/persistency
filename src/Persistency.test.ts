@@ -652,6 +652,42 @@ test.describe("Persistency", test => {
             }
         });
     });
+    test("should allocate unordered data on load", {
+        async ARRANGE(after) {
+            const { persistency, folder } = await newPersistency(after);
+            persistency.set("test0", value1);
+            persistency.set("test1", value2);
+            persistency.set("test2", value3);
+            persistency.set("test3", value4);
+            persistency.delete("test1");
+            persistency.delete("test2"); // Make free space
+            // Entry is the same size, so will fill test1 entry, but data is bigger, so will be appended after test3 data
+            // This way the entry will be ordered in a different order than the data
+            persistency.set("test4", Buffer.concat([ value1, value2, value3 ])); 
+            persistency.close();
+            return { folder };
+        },
+        ACT({ folder }, after) {
+            return newPersistency(after, { folder });
+        },
+        ASSERTS: {
+            "should have allocated entries"({ persistency }) {
+                Assert.deepStrictEqual(persistency.getAllocatedBlocks().entries, [
+                    [0, getEntryOffset(1) + entrySize],
+                    [getEntryOffset(3), getEntryOffset(3) + entrySize]
+                ]);
+            },
+            "should have allocated data"({ persistency }) {
+                Assert.deepStrictEqual(persistency.getAllocatedBlocks().data, [
+                    [0, getDataOffset(5, 0).end], // keylength 5
+                    [getDataOffset(5, 3).start, getDataOffset(5, 4).end + value2.length + value3.length], // keylength 5
+                ]);
+            },
+            "should count the number of entries"({ persistency }) {
+                Assert.strictEqual(persistency.count(), 3);
+            }
+        }
+    });
     // TODO:
     // Y ya testear todas las posibilidades al cargar (incluyendo que trunca)
     // Testear cuando se escriben datos parciales de absolutamente todos los bytes posibles (entrada y datos)
