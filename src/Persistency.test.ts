@@ -316,6 +316,102 @@ test.describe("Persistency", test => {
             }
         }
     });
+    test("should not overwrite pending data to purge", {
+        async ARRANGE(after) {
+            const { persistency } = await newPersistency(after);
+            persistency.set("aaa", value1);
+            persistency.set("aaa", value2);
+            const size = await getFileSizes(persistency);
+            return { persistency, size };
+        },
+        ACT({ persistency }) {
+            persistency.set("bbb", value1);
+        },
+        ASSERTS: {
+            async "entries file size must be bigger"(_, { persistency, size }) {
+                Assert.strictEqual(await getFileSize(persistency.entriesFile) > size.entries, true);
+            },
+            async "data file size must be bigger"(_, { persistency, size }) {
+                Assert.strictEqual(await getFileSize(persistency.dataFile) > size.data, true);
+            },
+            "should have aaa value"(_, { persistency }) {
+                Assert.deepStrictEqual(persistency.get("aaa"), value2);
+            },
+            "should have bbb value"(_, { persistency }) {
+                Assert.deepStrictEqual(persistency.get("bbb"), value1);
+            },
+            "should count the number of entries"(_, { persistency }) {
+                Assert.strictEqual(persistency.count(), 2);
+            }
+        }
+    });
+    test("should purge pending entry after load", {
+        async ARRANGE(after) {
+            const context = newContextMock();
+            const { persistency, folder } = await newPersistency(after, {
+                reclaimTimeout: 100
+            }, context);
+            persistency.set("aaa", value1);
+            persistency.set("aaa", value2);
+            const size = await getFileSizes(persistency);
+            persistency.close();
+            return { folder, size, context };
+        },
+        async ACT({ folder, context }, after) {
+            const { persistency } = await newPersistency(after, {
+                folder: folder,
+                reclaimTimeout: 100
+            }, context);
+            context.tick(100);
+            // If data is ready to be purged, next set will overwrite it
+            persistency.set("bbb", value1);
+            return { persistency };
+        },
+        ASSERTS: {
+            async "entries file size must match"({ persistency }, { size }) {
+                Assert.strictEqual(await getFileSize(persistency.entriesFile), size.entries);
+            },
+            async "data file size must match"({ persistency }, { size }) {
+                Assert.strictEqual(await getFileSize(persistency.dataFile), size.data);
+            },
+            "should overwrite data"({ persistency }) {
+                // If data is overwritten, then entry was deleted
+                Assert.deepStrictEqual(persistency.get("bbb"), value1);
+            },
+            "should count the number of entries"({ persistency }) {
+                Assert.strictEqual(persistency.count(), 2);
+            }
+        }
+    });
+    test("should not overwrite pending data to purge after load", {
+        async ARRANGE(after) {
+            const { persistency, folder } = await newPersistency(after);
+            persistency.set("aaa", value1);
+            persistency.set("aaa", value2);
+            const size = await getFileSizes(persistency);
+            persistency.close();
+            return { folder, size };
+        },
+        async ACT({ folder }, after) {
+            const { persistency } = await newPersistency(after, { folder });
+            persistency.set("bbb", value1);
+            return { persistency };
+        },
+        ASSERTS: {
+            async "entries file size must be bigger"({ persistency }, { size }) {
+                Assert.strictEqual(await getFileSize(persistency.entriesFile) > size.entries, true);
+            },
+            async "data file size must be bigger"({ persistency }, { size }) {
+                Assert.strictEqual(await getFileSize(persistency.dataFile) > size.data, true);
+            },
+            "should have aaa value"({ persistency }) {
+                Assert.deepStrictEqual(persistency.get("aaa"), value2);
+            },
+            "should have bbb value"({ persistency }) {
+                Assert.deepStrictEqual(persistency.get("bbb"), value1);
+            },
+            "should count the number of entries"({ persistency }) {
+                Assert.strictEqual(persistency.count(), 2);
             }
         }
     });
