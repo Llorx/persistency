@@ -26,6 +26,38 @@ test.describe("Persistency", test => {
             end: constants.MAGIC.length + ((keyLength + value1.length) * (dataI + 1))
         };
     }
+    async function overwriteFile(file:string, offset:number, buffer:Buffer) {
+        const data = await Fs.readFile(file);
+        buffer.copy(data, offset);
+        await Fs.writeFile(file, data);
+    }
+    function overwrite(persistency:Pick<Persistency, "entriesFile"|"dataFile">) {
+        return {
+            entry: {
+                entryVersion(entryI:number, data:Buffer) {
+                    return overwriteFile(persistency.entriesFile, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.ENTRY_VERSION, data);
+                },
+                entryHash(entryI:number, data:Buffer) {
+                    return overwriteFile(persistency.entriesFile, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.ENTRY_HASH, data);
+                },
+                location(entryI:number, data:Buffer) {
+                    return overwriteFile(persistency.entriesFile, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.SIZE + constants.EntryOffsets_V0.LOCATION, data);
+                },
+                dataHash(entryI:number, data:Buffer) {
+                    return overwriteFile(persistency.entriesFile, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.SIZE + constants.EntryOffsets_V0.DATA_HASH, data);
+                },
+                dataVersion(entryI:number, data:Buffer) {
+                    return overwriteFile(persistency.entriesFile, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.SIZE + constants.EntryOffsets_V0.DATA_VERSION, data);
+                },
+                keySize(entryI:number, data:Buffer) {
+                    return overwriteFile(persistency.entriesFile, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.SIZE + constants.EntryOffsets_V0.KEY_SIZE, data);
+                },
+                valueSize(entryI:number, data:Buffer) {
+                    return overwriteFile(persistency.entriesFile, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.SIZE + constants.EntryOffsets_V0.VALUE_SIZE, data);
+                }
+            }
+        };
+    }
     async function setValueDataVersion(persistency:Pick<Persistency, "entriesFile">, entryI:number, dataVersion:number) {
         const buffer = await Fs.readFile(persistency.entriesFile);
         buffer.writeUint32BE(dataVersion, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.SIZE + constants.EntryOffsets_V0.DATA_VERSION);
@@ -625,33 +657,6 @@ test.describe("Persistency", test => {
             }
         });
     });
-    test.describe("invalid data", test => {
-        test("should invalidate entry if partial entry is found", {
-            async ARRANGE(after) {
-                const { persistency, folder } = await newPersistency(after);
-                persistency.set("test0", value1);
-                persistency.set("test1", value2);
-                persistency.close();
-                const fileSize = await getFileSize(persistency.entriesFile);
-                await Fs.truncate(persistency.entriesFile, fileSize - 2); // partial write last entry
-                return { folder };
-            },
-            ACT({ folder }, after) {
-                return newPersistency(after, { folder });
-            },
-            ASSERTS: {
-                "should have entry 0"({ persistency }) {
-                    Assert.deepStrictEqual(persistency.get("test0"), value1);
-                },
-                "should not have entry 1"({ persistency }) {
-                    Assert.strictEqual(persistency.get("test1"), null);
-                },
-                "should count the number of entries"({ persistency }) {
-                    Assert.strictEqual(persistency.count(), 1);
-                }
-            }
-        });
-    });
     test("should allocate unordered data on load", {
         async ARRANGE(after) {
             const { persistency, folder } = await newPersistency(after);
@@ -688,8 +693,111 @@ test.describe("Persistency", test => {
             }
         }
     });
+    test("should allocate unordered entries on load", {
+        async ARRANGE(after) {
+            const { persistency, folder } = await newPersistency(after);
+            persistency.set("test0", value1);
+            persistency.set("test1", value2);
+            persistency.set("test0", value3);
+            persistency.close();
+            return { folder };
+        },
+        ACT({ folder }, after) {
+            return newPersistency(after, { folder });
+        },
+        ASSERTS: {
+            "should have allocated entries"({ persistency }) {
+                Assert.deepStrictEqual(persistency.getAllocatedBlocks().entries, [
+                    [0, getEntryOffset(2) + entrySize]
+                ]);
+            },
+            "should have allocated data"({ persistency }) {
+                Assert.deepStrictEqual(persistency.getAllocatedBlocks().data, [
+                    [0, getDataOffset(5, 2).end], // keylength 5
+                ]);
+            },
+            "should count the number of entries"({ persistency }) {
+                Assert.strictEqual(persistency.count(), 2);
+            }
+        }
+    });
+    test.describe("partial writes", test => {
+        test("should invalidate entry if partial file is found", {
+            async ARRANGE(after) {
+                const { persistency, folder } = await newPersistency(after);
+                persistency.set("test0", value1);
+                persistency.set("test1", value2);
+                persistency.close();
+                const fileSize = await getFileSize(persistency.entriesFile);
+                await Fs.truncate(persistency.entriesFile, fileSize - 2); // partial write last entry
+                return { folder };
+            },
+            ACT({ folder }, after) {
+                return newPersistency(after, { folder });
+            },
+            ASSERTS: {
+                "should have entry 0"({ persistency }) {
+                    Assert.deepStrictEqual(persistency.get("test0"), value1);
+                },
+                "should not have entry 1"({ persistency }) {
+                    Assert.strictEqual(persistency.get("test1"), null);
+                },
+                "should count the number of entries"({ persistency }) {
+                    Assert.strictEqual(persistency.count(), 1);
+                }
+            }
+        });
+        test("should invalidate entry if entry version is invalid", {
+            async ARRANGE(after) {
+                const { persistency, folder } = await newPersistency(after);
+                persistency.set("test0", value1);
+                persistency.set("test1", value2);
+                persistency.close();
+                await overwrite(persistency).entry.entryVersion(0, Buffer.from([ 0xA0 ]));
+                return { folder };
+            },
+            ACT({ folder }, after) {
+                return newPersistency(after, { folder });
+            },
+            ASSERTS: {
+                "should not have entry 0"({ persistency }) {
+                    Assert.deepStrictEqual(persistency.get("test0"), null);
+                },
+                "should have entry 1"({ persistency }) {
+                    Assert.deepStrictEqual(persistency.get("test1"), value2);
+                },
+                "should count the number of entries"({ persistency }) {
+                    Assert.strictEqual(persistency.count(), 1);
+                }
+            }
+        });
+        test("should invalidate entry if entry hash is invalid", {
+            async ARRANGE(after) {
+                const { persistency, folder } = await newPersistency(after);
+                persistency.set("test0", value1);
+                persistency.set("test1", value2);
+                persistency.close();
+                await overwrite(persistency).entry.entryHash(0, Buffer.from([ 0x00, 0x01 ]));
+                return { folder };
+            },
+            ACT({ folder }, after) {
+                return newPersistency(after, { folder });
+            },
+            ASSERTS: {
+                "should not have entry 0"({ persistency }) {
+                    Assert.deepStrictEqual(persistency.get("test0"), null);
+                },
+                "should have entry 1"({ persistency }) {
+                    Assert.deepStrictEqual(persistency.get("test1"), value2);
+                },
+                "should count the number of entries"({ persistency }) {
+                    Assert.strictEqual(persistency.count(), 1);
+                }
+            }
+        });
+    });
     // TODO:
     // Y ya testear todas las posibilidades al cargar (incluyendo que trunca)
     // Testear cuando se escriben datos parciales de absolutamente todos los bytes posibles (entrada y datos)
-    // Testear esto además cuando se van a borrar entradas (bytes parciales escritos)
+    // Testear esto además cuando se van a borrar entradas (zero bytes parciales escritos)
 });

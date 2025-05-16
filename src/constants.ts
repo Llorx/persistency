@@ -3,7 +3,7 @@ import { shake128 } from "./utils";
 export const MAGIC = Buffer.from([ 0xFA, 0xF2, 0xD6, 0x91 ]);
 
 export const EMPTY_ENTRY = Buffer.allocUnsafe(EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.SIZE);
-EMPTY_ENTRY[EntryHeaderOffsets_V0.VERSION] = 0;
+EMPTY_ENTRY[EntryHeaderOffsets_V0.ENTRY_VERSION] = 0;
 EMPTY_ENTRY.fill(0, EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.LOCATION);
 const entryHash = shake128(EMPTY_ENTRY.subarray(EntryHeaderOffsets_V0.SIZE));
 entryHash.copy(EMPTY_ENTRY, EntryHeaderOffsets_V0.ENTRY_HASH);
@@ -22,8 +22,8 @@ export const enum Values {
     UINT_48_ROLLOVER = 2 ** 48
 }
 export const enum EntryHeaderOffsets_V0 {
-    VERSION = 0,
-    ENTRY_HASH = VERSION + Bytes.UINT_8,
+    ENTRY_VERSION = 0,
+    ENTRY_HASH = ENTRY_VERSION + Bytes.UINT_8,
     SIZE = ENTRY_HASH + Bytes.SHAKE_128
 }
 export const enum EntryOffsets_V0 {

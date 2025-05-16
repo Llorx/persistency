@@ -46,8 +46,12 @@ export class Persistency {
         try {
             const entryHeaderBuffer = Buffer.allocUnsafe(EntryHeaderOffsets_V0.SIZE);
             const entryBuffer = Buffer.allocUnsafe(EntryOffsets_V0.SIZE);
+            const entrySize = EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.SIZE;
             const magic = Buffer.allocUnsafe(4);
             const entriesReader = fd.entries.reader();
+            const allEntries:Entry[] = [];
+            const entryAllocation = this._freeEntryBlocks.setAllocation();
+            entryAllocation.add(0, MAGIC.length);
             if (fd.data.read(magic, 0, false)) {
                 if (!magic.equals(MAGIC)) {
                     throw new Error("Data file is not a persistency one");
@@ -67,8 +71,8 @@ export class Persistency {
                         if (!entriesReader.read(entryHeaderBuffer, false)) {
                             break;
                         }
-                        if (entryHeaderBuffer[EntryHeaderOffsets_V0.VERSION] !== 0) {
-                            // TODO: Test this
+                        if (entryHeaderBuffer[EntryHeaderOffsets_V0.ENTRY_VERSION] !== 0) {
+                            entriesReader.advance(entryBuffer.length);
                             throw new Error("Invalid entry version");
                         }
                         const storedEntryHash = entryHeaderBuffer.subarray(EntryHeaderOffsets_V0.ENTRY_HASH, EntryHeaderOffsets_V0.ENTRY_HASH + Bytes.SHAKE_128);
@@ -117,18 +121,32 @@ export class Persistency {
                                 }
                                 if (this.reclaimTimeout <= 0) {
                                     // TODO: Test all this
+                                    // TODO: Por aquí no entra...
                                     if (i > 0) {
                                         const lastEntry = entries.pop()!;
                                         this._fd.entries.write(EMPTY_ENTRY, lastEntry.location);
                                         entries.push(entry);
+                                        allEntries.push(entry);
+                                        entryAllocation.add(entry.location, entry.location + entrySize);
                                     } else {
                                         this._fd.entries.write(EMPTY_ENTRY, entry.location);
                                     }
                                 } else {
-                                    entries.splice(i, 0, entry);
+                                    if (i === entries.length) {
+                                        this._purgeEntry(key, entries[i - 1]);
+                                        entries.push(entry);
+                                    } else {
+                                        // TODO: Aunque el código pase por aquí, no está testeado este purge. Si se comenta no da errores
+                                        this._purgeEntry(key, entry);
+                                        entries.splice(i, 0, entry);
+                                    }
+                                    allEntries.push(entry);
+                                    entryAllocation.add(entry.location, entry.location + entrySize);
                                 }
                             } else {
                                 this._data.set(key, [ entry ]);
+                                allEntries.push(entry);
+                                entryAllocation.add(entry.location, entry.location + entrySize);
                             }
                         }
                     } catch (e) {
@@ -137,7 +155,8 @@ export class Persistency {
                     }
                 }
             }
-            this._setFreeMemoryBlocks(fd);
+            fd.entries.truncate(entryAllocation.finish());
+            this._setFreeMemoryData(fd, allEntries);
         } catch (e) {
             console.error(e);
             // TODO: log invalid persistency
@@ -151,33 +170,6 @@ export class Persistency {
             entriesFile: this.entriesFile,
             dataFile: this.dataFile
         });
-    }
-    private _setFreeMemoryBlocks(fd:typeof this._fd) {
-        const entries = this._setFreeMemoryEntries(fd);
-        this._setFreeMemoryData(fd, entries);
-    }
-    private _setFreeMemoryEntries(fd:typeof this._fd) {
-        const entrySize = EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.SIZE;
-        const entryAllocation = this._freeEntryBlocks.setAllocation();
-        entryAllocation.add(0, MAGIC.length);
-        const allEntries:Entry[] = []; // Remove when adding b-trees for memory blocks
-        for (const [key, entries] of this._data) {
-            let i = 0;
-            while (true) {
-                const entry = entries[i++];
-                allEntries.push(entry);
-                entryAllocation.add(entry.location, entry.location + entrySize);
-                if (i === entries.length) {
-                    // TODO: Test all this
-                    break;
-                } else {
-                    // TODO: Test all this
-                    this._purgeEntry(key, entry);
-                }
-            }
-        }
-        fd.entries.truncate(entryAllocation.finish());
-        return allEntries;
     }
     private _setFreeMemoryData(fd:typeof this._fd, entries:Entry[]) {
         // TODO: Test entries.sort
@@ -198,7 +190,9 @@ export class Persistency {
     private _freeEntry(entry:Entry) {
         const endFile = this._freeEntryBlocks.free(entry.location, entry.location + EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.SIZE);
         if (endFile != null) {
-            this._fd.entries.truncate(endFile); // No need to fsync after this
+            this._fd.entries.truncate(endFile);
+        } else {
+            // Buscar la última entrada y meterla en este hueco
         }
     }
     private _freeData(entry:Entry) {
@@ -285,7 +279,7 @@ export class Persistency {
         }
         const entryHeaderBuffer = Buffer.allocUnsafe(EntryHeaderOffsets_V0.SIZE);
         const entryBuffer = Buffer.allocUnsafe(EntryOffsets_V0.SIZE);
-        entryHeaderBuffer[EntryHeaderOffsets_V0.VERSION] = 0;
+        entryHeaderBuffer[EntryHeaderOffsets_V0.ENTRY_VERSION] = 0;
 
         // Workaround to write 7 bytes in nodejs
         const dataLocationByte7 = (dataLocation / Values.UINT_48_ROLLOVER) | 0;
