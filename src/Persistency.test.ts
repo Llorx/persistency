@@ -1,10 +1,10 @@
 import * as Fs from "fs/promises";
-import * as Assert from "assert";
 import * as Os from "os";
 import * as Path from "path";
 
 import test, { After, asyncMonad } from "arrange-act-assert";
 
+import { assertDeepEqual, assertEqual } from "./testUtils";
 import { Persistency, PersistencyContext, PersistencyOptions } from "./Persistency";
 import * as constants from "./constants";
 import { shake128 } from "./utils";
@@ -117,10 +117,10 @@ test.describe("Persistency", test => {
         },
         ASSERTS: {
             "should have the data"(_, { persistency }) {
-                Assert.deepStrictEqual(persistency.get("test"), value1);
+                assertDeepEqual(persistency.get("test"), value1);
             },
             "should count the number of entries"(_, { persistency }) {
-                Assert.strictEqual(persistency.count(), 1);
+                assertEqual(persistency.count(), 1);
             }
         }
     });
@@ -137,13 +137,13 @@ test.describe("Persistency", test => {
         },
         ASSERTS: {
             "should have first data"({ persistency }) {
-                Assert.deepStrictEqual(persistency.get("test"), value1);
+                assertDeepEqual(persistency.get("test"), value1);
             },
             "should have second data"({ persistency }) {
-                Assert.deepStrictEqual(persistency.get("test2"), value2);
+                assertDeepEqual(persistency.get("test2"), value2);
             },
             "should count the number of entries"({ persistency }) {
-                Assert.strictEqual(persistency.count(), 2);
+                assertEqual(persistency.count(), 2);
             }
         }
     });
@@ -160,10 +160,10 @@ test.describe("Persistency", test => {
         },
         ASSERTS: {
             "should have the correct data"({ persistency }) {
-                Assert.deepStrictEqual(persistency.get("test"), value2);
+                assertDeepEqual(persistency.get("test"), value2);
             },
             "should count the number of entries"({ persistency }) {
-                Assert.strictEqual(persistency.count(), 1);
+                assertEqual(persistency.count(), 1);
             }
         }
     });
@@ -177,10 +177,10 @@ test.describe("Persistency", test => {
         },
         ASSERTS: {
             "should have the data data"(_, { persistency }) {
-                Assert.deepStrictEqual(persistency.get("test"), value2);
+                assertDeepEqual(persistency.get("test"), value2);
             },
             "should count the number of entries"(_, { persistency }) {
-                Assert.strictEqual(persistency.count(), 1);
+                assertEqual(persistency.count(), 1);
             }
         }
     });
@@ -196,13 +196,13 @@ test.describe("Persistency", test => {
         },
         ASSERTS: {
             "should not have first data"(_, { persistency }) {
-                Assert.strictEqual(persistency.get("test"), null);
+                assertEqual(persistency.get("test"), null);
             },
             "should have second data"(_, { persistency }) {
-                Assert.deepStrictEqual(persistency.get("test2"), value2);
+                assertDeepEqual(persistency.get("test2"), value2);
             },
             "should count the number of entries"(_, { persistency }) {
-                Assert.strictEqual(persistency.count(), 1);
+                assertEqual(persistency.count(), 1);
             }
         }
     });
@@ -220,13 +220,13 @@ test.describe("Persistency", test => {
         },
         ASSERTS: {
             "should not have first data"({ persistency }) {
-                Assert.strictEqual(persistency.get("test"), null);
+                assertEqual(persistency.get("test"), null);
             },
             "should have second data"({ persistency }) {
-                Assert.deepStrictEqual(persistency.get("test2"), value2);
+                assertDeepEqual(persistency.get("test2"), value2);
             },
             "should count the number of entries"({ persistency }) {
-                Assert.strictEqual(persistency.count(), 1);
+                assertEqual(persistency.count(), 1);
             }
         }
     });
@@ -244,10 +244,10 @@ test.describe("Persistency", test => {
         },
         ASSERTS: {
             "should get the correct value for the entry"({ persistency }) {
-                Assert.strictEqual(persistency.get("test"), null);
+                assertEqual(persistency.get("test"), null);
             },
             "should count the number of entries"({ persistency }) {
-                Assert.strictEqual(persistency.count(), 0);
+                assertEqual(persistency.count(), 0);
             }
         }
     });
@@ -265,10 +265,10 @@ test.describe("Persistency", test => {
         },
         ASSERTS: {
             "should get the correct value for the entry"({ persistency }) {
-                Assert.deepStrictEqual(persistency.get("test"), value1);
+                assertDeepEqual(persistency.get("test"), value1);
             },
             "should count the number of entries"({ persistency }) {
-                Assert.strictEqual(persistency.count(), 1);
+                assertEqual(persistency.count(), 1);
             }
         }
     });
@@ -286,10 +286,10 @@ test.describe("Persistency", test => {
         },
         ASSERTS: {
             "should get the correct value for the entry"({ persistency }) {
-                Assert.deepStrictEqual(persistency.get("test"), value2);
+                assertDeepEqual(persistency.get("test"), value2);
             },
             "should count the number of entries"({ persistency }) {
-                Assert.strictEqual(persistency.count(), 1);
+                assertEqual(persistency.count(), 1);
             }
         }
     });
@@ -306,13 +306,13 @@ test.describe("Persistency", test => {
         },
         ASSERTS: {
             async "entries file size must match"(_, { persistency, size }) {
-                Assert.strictEqual(await getFileSize(persistency.entriesFile), size.entries);
+                assertEqual(await getFileSize(persistency.entriesFile), size.entries);
             },
             async "data file size must match"(_, { persistency, size }) {
-                Assert.strictEqual(await getFileSize(persistency.dataFile), size.data);
+                assertEqual(await getFileSize(persistency.dataFile), size.data);
             },
             "should count the number of entries"(_, { persistency }) {
-                Assert.strictEqual(persistency.count(), 1);
+                assertEqual(persistency.count(), 1);
             }
         }
     });
@@ -334,17 +334,17 @@ test.describe("Persistency", test => {
         },
         ASSERTS: {
             async "entries file size must match"(_, { persistency, size }) {
-                Assert.strictEqual(await getFileSize(persistency.entriesFile), size.entries);
+                assertEqual(await getFileSize(persistency.entriesFile), size.entries);
             },
             async "data file size must match"(_, { persistency, size }) {
-                Assert.strictEqual(await getFileSize(persistency.dataFile), size.data);
+                assertEqual(await getFileSize(persistency.dataFile), size.data);
             },
             "should overwrite data"(_, { persistency }) {
                 // If data is overwritten, then entry was deleted
-                Assert.deepStrictEqual(persistency.get("bbb"), value1);
+                assertDeepEqual(persistency.get("bbb"), value1);
             },
             "should count the number of entries"(_, { persistency }) {
-                Assert.strictEqual(persistency.count(), 2);
+                assertEqual(persistency.count(), 2);
             }
         }
     });
@@ -361,19 +361,19 @@ test.describe("Persistency", test => {
         },
         ASSERTS: {
             async "entries file size must be bigger"(_, { persistency, size }) {
-                Assert.strictEqual(await getFileSize(persistency.entriesFile) > size.entries, true);
+                assertEqual(await getFileSize(persistency.entriesFile) > size.entries, true);
             },
             async "data file size must be bigger"(_, { persistency, size }) {
-                Assert.strictEqual(await getFileSize(persistency.dataFile) > size.data, true);
+                assertEqual(await getFileSize(persistency.dataFile) > size.data, true);
             },
             "should have aaa value"(_, { persistency }) {
-                Assert.deepStrictEqual(persistency.get("aaa"), value2);
+                assertDeepEqual(persistency.get("aaa"), value2);
             },
             "should have bbb value"(_, { persistency }) {
-                Assert.deepStrictEqual(persistency.get("bbb"), value1);
+                assertDeepEqual(persistency.get("bbb"), value1);
             },
             "should count the number of entries"(_, { persistency }) {
-                Assert.strictEqual(persistency.count(), 2);
+                assertEqual(persistency.count(), 2);
             }
         }
     });
@@ -401,17 +401,17 @@ test.describe("Persistency", test => {
         },
         ASSERTS: {
             async "entries file size must match"({ persistency }, { size }) {
-                Assert.strictEqual(await getFileSize(persistency.entriesFile), size.entries);
+                assertEqual(await getFileSize(persistency.entriesFile), size.entries);
             },
             async "data file size must match"({ persistency }, { size }) {
-                Assert.strictEqual(await getFileSize(persistency.dataFile), size.data);
+                assertEqual(await getFileSize(persistency.dataFile), size.data);
             },
             "should overwrite data"({ persistency }) {
                 // If data is overwritten, then entry was deleted
-                Assert.deepStrictEqual(persistency.get("bbb"), value1);
+                assertDeepEqual(persistency.get("bbb"), value1);
             },
             "should count the number of entries"({ persistency }) {
-                Assert.strictEqual(persistency.count(), 2);
+                assertEqual(persistency.count(), 2);
             }
         }
     });
@@ -431,19 +431,19 @@ test.describe("Persistency", test => {
         },
         ASSERTS: {
             async "entries file size must be bigger"({ persistency }, { size }) {
-                Assert.strictEqual(await getFileSize(persistency.entriesFile) > size.entries, true);
+                assertEqual(await getFileSize(persistency.entriesFile) > size.entries, true);
             },
             async "data file size must be bigger"({ persistency }, { size }) {
-                Assert.strictEqual(await getFileSize(persistency.dataFile) > size.data, true);
+                assertEqual(await getFileSize(persistency.dataFile) > size.data, true);
             },
             "should have aaa value"({ persistency }) {
-                Assert.deepStrictEqual(persistency.get("aaa"), value2);
+                assertDeepEqual(persistency.get("aaa"), value2);
             },
             "should have bbb value"({ persistency }) {
-                Assert.deepStrictEqual(persistency.get("bbb"), value1);
+                assertDeepEqual(persistency.get("bbb"), value1);
             },
             "should count the number of entries"({ persistency }) {
-                Assert.strictEqual(persistency.count(), 2);
+                assertEqual(persistency.count(), 2);
             }
         }
     });
@@ -466,13 +466,13 @@ test.describe("Persistency", test => {
         },
         ASSERTS: {
             "should delete aaa"(_, { persistency }) {
-                Assert.deepStrictEqual(persistency.get("aaa"), null);
+                assertDeepEqual(persistency.get("aaa"), null);
             },
             "should get the correct value for bbb"(_, { persistency }) {
-                Assert.deepStrictEqual(persistency.get("bbb"), value4);
+                assertDeepEqual(persistency.get("bbb"), value4);
             },
             "should count the number of entries"(_, { persistency }) {
-                Assert.strictEqual(persistency.count(), 1);
+                assertEqual(persistency.count(), 1);
             }
         }
     });
@@ -492,13 +492,13 @@ test.describe("Persistency", test => {
         },
         ASSERTS: {
             async "entries file size must match"(_, { persistency, size }) {
-                Assert.strictEqual(await getFileSize(persistency.entriesFile), size.entries);
+                assertEqual(await getFileSize(persistency.entriesFile), size.entries);
             },
             async "data file size must match"(_, { persistency, size }) {
-                Assert.strictEqual(await getFileSize(persistency.dataFile), size.data);
+                assertEqual(await getFileSize(persistency.dataFile), size.data);
             },
             "should count the number of entries"(_, { persistency }) {
-                Assert.strictEqual(persistency.count(), 2);
+                assertEqual(persistency.count(), 2);
             }
         }
     });
@@ -526,21 +526,21 @@ test.describe("Persistency", test => {
         },
         ASSERTS: {
             "should have allocated entries in memory"({ persistency }) {
-                Assert.deepStrictEqual(persistency.getAllocatedBlocks().entries, [
+                assertDeepEqual(persistency.getAllocatedBlocks().entries, [
                     [0, getEntryOffset(0) + entrySize],
                     [getEntryOffset(3), getEntryOffset(3) + entrySize],
                     [getEntryOffset(5), getEntryOffset(6) + entrySize]
                 ]);
             },
             "should have allocated data in memory"({ persistency }) {
-                Assert.deepStrictEqual(persistency.getAllocatedBlocks().data, [
+                assertDeepEqual(persistency.getAllocatedBlocks().data, [
                     [0, getDataOffset(5, 0).end], // keylength 5
                     [getDataOffset(5, 3).start, getDataOffset(5, 3).end], // keylength 5
                     [getDataOffset(5, 5).start, getDataOffset(5, 6).end] // keylength 5
                 ]);
             },
             "should count the number of entries"({ persistency }) {
-                Assert.strictEqual(persistency.count(), 4);
+                assertEqual(persistency.count(), 4);
             }
         }
     });
@@ -560,16 +560,16 @@ test.describe("Persistency", test => {
             },
             ASSERTS: {
                 "should not have entry3"(_, { persistency }) {
-                    Assert.strictEqual(persistency.get("entry3"), null);
+                    assertEqual(persistency.get("entry3"), null);
                 },
                 async "should truncate entries file"(_, { persistency, fileSizes }) {
-                    Assert.strictEqual(await getFileSize(persistency.entriesFile) < fileSizes.entries, true);
+                    assertEqual(await getFileSize(persistency.entriesFile) < fileSizes.entries, true);
                 },
                 async "should truncate data file"(_, { persistency, fileSizes }) {
-                    Assert.strictEqual(await getFileSize(persistency.dataFile) < fileSizes.data, true);
+                    assertEqual(await getFileSize(persistency.dataFile) < fileSizes.data, true);
                 },
                 "should count the number of entries"(_, { persistency }) {
-                    Assert.strictEqual(persistency.count(), 3);
+                    assertEqual(persistency.count(), 3);
                 }
             }
         });
@@ -590,16 +590,16 @@ test.describe("Persistency", test => {
             },
             ASSERTS: {
                 "should not have entry3"({ persistency }) {
-                    Assert.strictEqual(persistency.get("entry3"), null);
+                    assertEqual(persistency.get("entry3"), null);
                 },
                 async "should truncate entries file"({ persistency }, { fileSizes }) {
-                    Assert.strictEqual(await getFileSize(persistency.entriesFile) < fileSizes.entries, true);
+                    assertEqual(await getFileSize(persistency.entriesFile) < fileSizes.entries, true);
                 },
                 async "should truncate data file"({ persistency }, { fileSizes }) {
-                    Assert.strictEqual(await getFileSize(persistency.dataFile) < fileSizes.data, true);
+                    assertEqual(await getFileSize(persistency.dataFile) < fileSizes.data, true);
                 },
                 "should count the number of entries"({ persistency }) {
-                    Assert.strictEqual(persistency.count(), 3);
+                    assertEqual(persistency.count(), 3);
                 }
             }
         });
@@ -611,10 +611,10 @@ test.describe("Persistency", test => {
             },
             ASSERTS: {
                 async "should write magic in entries file"({ persistency }) {
-                    Assert.deepStrictEqual((await Fs.readFile(persistency.entriesFile)).subarray(0, constants.MAGIC.length), constants.MAGIC);
+                    assertDeepEqual((await Fs.readFile(persistency.entriesFile)).subarray(0, constants.MAGIC.length), constants.MAGIC);
                 },
                 async "should write magic in data file"({ persistency }) {
-                    Assert.deepStrictEqual((await Fs.readFile(persistency.dataFile)).subarray(0, constants.MAGIC.length), constants.MAGIC);
+                    assertDeepEqual((await Fs.readFile(persistency.dataFile)).subarray(0, constants.MAGIC.length), constants.MAGIC);
                 }
             }
         });
@@ -677,19 +677,19 @@ test.describe("Persistency", test => {
         },
         ASSERTS: {
             "should have allocated entries"({ persistency }) {
-                Assert.deepStrictEqual(persistency.getAllocatedBlocks().entries, [
+                assertDeepEqual(persistency.getAllocatedBlocks().entries, [
                     [0, getEntryOffset(1) + entrySize],
                     [getEntryOffset(3), getEntryOffset(3) + entrySize]
                 ]);
             },
             "should have allocated data"({ persistency }) {
-                Assert.deepStrictEqual(persistency.getAllocatedBlocks().data, [
+                assertDeepEqual(persistency.getAllocatedBlocks().data, [
                     [0, getDataOffset(5, 0).end], // keylength 5
                     [getDataOffset(5, 3).start, getDataOffset(5, 4).end + value2.length + value3.length], // keylength 5
                 ]);
             },
             "should count the number of entries"({ persistency }) {
-                Assert.strictEqual(persistency.count(), 3);
+                assertEqual(persistency.count(), 3);
             }
         }
     });
@@ -707,17 +707,17 @@ test.describe("Persistency", test => {
         },
         ASSERTS: {
             "should have allocated entries"({ persistency }) {
-                Assert.deepStrictEqual(persistency.getAllocatedBlocks().entries, [
+                assertDeepEqual(persistency.getAllocatedBlocks().entries, [
                     [0, getEntryOffset(2) + entrySize]
                 ]);
             },
             "should have allocated data"({ persistency }) {
-                Assert.deepStrictEqual(persistency.getAllocatedBlocks().data, [
+                assertDeepEqual(persistency.getAllocatedBlocks().data, [
                     [0, getDataOffset(5, 2).end], // keylength 5
                 ]);
             },
             "should count the number of entries"({ persistency }) {
-                Assert.strictEqual(persistency.count(), 2);
+                assertEqual(persistency.count(), 2);
             }
         }
     });
@@ -737,13 +737,13 @@ test.describe("Persistency", test => {
             },
             ASSERTS: {
                 "should have entry 0"({ persistency }) {
-                    Assert.deepStrictEqual(persistency.get("test0"), value1);
+                    assertDeepEqual(persistency.get("test0"), value1);
                 },
                 "should not have entry 1"({ persistency }) {
-                    Assert.strictEqual(persistency.get("test1"), null);
+                    assertEqual(persistency.get("test1"), null);
                 },
                 "should count the number of entries"({ persistency }) {
-                    Assert.strictEqual(persistency.count(), 1);
+                    assertEqual(persistency.count(), 1);
                 }
             }
         });
@@ -761,13 +761,13 @@ test.describe("Persistency", test => {
             },
             ASSERTS: {
                 "should not have entry 0"({ persistency }) {
-                    Assert.deepStrictEqual(persistency.get("test0"), null);
+                    assertDeepEqual(persistency.get("test0"), null);
                 },
                 "should have entry 1"({ persistency }) {
-                    Assert.deepStrictEqual(persistency.get("test1"), value2);
+                    assertDeepEqual(persistency.get("test1"), value2);
                 },
                 "should count the number of entries"({ persistency }) {
-                    Assert.strictEqual(persistency.count(), 1);
+                    assertEqual(persistency.count(), 1);
                 }
             }
         });
@@ -785,13 +785,13 @@ test.describe("Persistency", test => {
             },
             ASSERTS: {
                 "should not have entry 0"({ persistency }) {
-                    Assert.deepStrictEqual(persistency.get("test0"), null);
+                    assertDeepEqual(persistency.get("test0"), null);
                 },
                 "should have entry 1"({ persistency }) {
-                    Assert.deepStrictEqual(persistency.get("test1"), value2);
+                    assertDeepEqual(persistency.get("test1"), value2);
                 },
                 "should count the number of entries"({ persistency }) {
-                    Assert.strictEqual(persistency.count(), 1);
+                    assertEqual(persistency.count(), 1);
                 }
             }
         });

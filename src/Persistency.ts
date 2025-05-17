@@ -1,7 +1,7 @@
 import * as Path from "path";
 
 import { openFiles, shake128 } from "./utils";
-import { FreeBlocks } from "./FreeBlocks";
+import { MemoryBlocks, Block } from "./MemoryBlocks";
 import { EMPTY_ENTRY, Bytes, EntryHeaderOffsets_V0, EntryOffsets_V0, MAGIC, Values } from "./constants";
 
 export type PersistencyOptions = {
@@ -12,12 +12,25 @@ export type PersistencyContext = {
     now():number; // Inject "world access" dependency for easier testing
 };
 type Entry = {
-    location:number;
-    dataLocation:number;
+    block:Block<Entry>;
+    dataBlock:Block<Entry>;
     valueLocation:number;
-    valueSize:number;
     dataVersion:number;
     purging:boolean;
+};
+type PartialEntry = Omit<Entry, "block"|"dataBlock"> & {
+    block:Block<Entry>|null;
+    dataBlock:Block<Entry>|null;
+};
+type PartialDataEntry = Omit<Entry, "dataBlock"> & {
+    block:Block<Entry>;
+    dataBlock:Block<Entry>|null;
+};
+type LoadingEntry = {
+    entry:PartialEntry;
+    location:number;
+    dataLocation:number;
+    valueSize:number;
 };
 export class Persistency {
     private _fd;
@@ -27,8 +40,8 @@ export class Persistency {
     readonly reclaimTimeout;
     private _data = new Map<string, [Entry, ...Entry[]]>();
     private _purgeEntries:{key:string; entry:Entry; ts:number}[] = [];
-    private _freeEntryBlocks = new FreeBlocks();
-    private _freeDataBlocks = new FreeBlocks();
+    private _entriesMemory = new MemoryBlocks<Entry>(MAGIC.length);
+    private _dataMemory = new MemoryBlocks<Entry>(MAGIC.length);
     constructor(options:PersistencyOptions, private _context:PersistencyContext = { now: Date.now }) {
         if (!options.folder) {
             throw new Error("Invalid folder");
@@ -46,12 +59,9 @@ export class Persistency {
         try {
             const entryHeaderBuffer = Buffer.allocUnsafe(EntryHeaderOffsets_V0.SIZE);
             const entryBuffer = Buffer.allocUnsafe(EntryOffsets_V0.SIZE);
-            const entrySize = EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.SIZE;
+            const data = new Map<string, [LoadingEntry, ...LoadingEntry[]]>();
             const magic = Buffer.allocUnsafe(4);
             const entriesReader = fd.entries.reader();
-            const allEntries:Entry[] = [];
-            const entryAllocation = this._freeEntryBlocks.setAllocation();
-            entryAllocation.add(0, MAGIC.length);
             if (fd.data.read(magic, 0, false)) {
                 if (!magic.equals(MAGIC)) {
                     throw new Error("Data file is not a persistency one");
@@ -95,58 +105,24 @@ export class Persistency {
                                 throw new Error("Invalid data hash");
                             }
                             const key = (dataBuffer as any).utf8Slice(0, keySize); // small optimization non-documented methods
-                            const entry:Entry = {
+                            const valueLocation = dataLocation + keySize;
+                            const loadingEntry:LoadingEntry = {
+                                entry: {
+                                    block: null,
+                                    dataBlock: null,
+                                    dataVersion: dataVersion,
+                                    valueLocation: valueLocation,
+                                    purging: false
+                                },
                                 location: entryLocation,
                                 dataLocation: dataLocation,
-                                valueLocation: dataLocation + keySize,
-                                valueSize: valueSize,
-                                dataVersion: dataVersion,
-                                purging: false
+                                valueSize: valueSize
                             };
-                            const entries = this._data.get(key);
-                            if (entries) {
-                                let i = 0;
-                                while (i < entries.length) {
-                                    const lastEntry = entries[i];
-                                    if (entry.dataVersion > lastEntry.dataVersion) {
-                                        if ((entry.dataVersion - lastEntry.dataVersion) >= Values.UINT_32_HALF) {
-                                            // TODO: Test all this
-                                            break;
-                                        }
-                                    } else if ((lastEntry.dataVersion - entry.dataVersion) < Values.UINT_32_HALF) {
-                                        // TODO: Test all this
-                                        break;
-                                    }
-                                    i++;
-                                }
-                                if (this.reclaimTimeout <= 0) {
-                                    // TODO: Test all this
-                                    // TODO: Por aquí no entra...
-                                    if (i > 0) {
-                                        const lastEntry = entries.pop()!;
-                                        this._fd.entries.write(EMPTY_ENTRY, lastEntry.location);
-                                        entries.push(entry);
-                                        allEntries.push(entry);
-                                        entryAllocation.add(entry.location, entry.location + entrySize);
-                                    } else {
-                                        this._fd.entries.write(EMPTY_ENTRY, entry.location);
-                                    }
-                                } else {
-                                    if (i === entries.length) {
-                                        this._purgeEntry(key, entries[i - 1]);
-                                        entries.push(entry);
-                                    } else {
-                                        // TODO: Aunque el código pase por aquí, no está testeado este purge. Si se comenta no da errores
-                                        this._purgeEntry(key, entry);
-                                        entries.splice(i, 0, entry);
-                                    }
-                                    allEntries.push(entry);
-                                    entryAllocation.add(entry.location, entry.location + entrySize);
-                                }
+                            const loadingEntries = data.get(key);
+                            if (loadingEntries) {
+                                loadingEntries.push(loadingEntry);
                             } else {
-                                this._data.set(key, [ entry ]);
-                                allEntries.push(entry);
-                                entryAllocation.add(entry.location, entry.location + entrySize);
+                                data.set(key, [ loadingEntry ]);
                             }
                         }
                     } catch (e) {
@@ -155,8 +131,33 @@ export class Persistency {
                     }
                 }
             }
-            fd.entries.truncate(entryAllocation.finish());
-            this._setFreeMemoryData(fd, allEntries);
+            const allLoadingEntries:LoadingEntry[] = [];
+            for (const [ key, loadingEntries ] of data) {
+                loadingEntries.sort((a, b) => {
+                    if (a.entry.dataVersion > b.entry.dataVersion) {
+                        if ((a.entry.dataVersion - b.entry.dataVersion) >= Values.UINT_32_HALF) {
+                            return -1;
+                        }
+                    } else if ((b.entry.dataVersion - a.entry.dataVersion) < Values.UINT_32_HALF) {
+                        return -1;
+                    }
+                    return 1;
+                });
+                const entries = [];
+                for (let i = 0; i < loadingEntries.length - 1; i++) {
+                    if (this.reclaimTimeout > 0) {
+                        this._purgeEntry(key, loadingEntries[i].entry as Required<Entry>);
+                        entries.push(loadingEntries[i].entry as Required<Entry>);
+                        allLoadingEntries.push(loadingEntries[i]);
+                    } else {
+                        this._fd.entries.write(EMPTY_ENTRY, loadingEntries[i].location);
+                    }
+                }
+                allLoadingEntries.push(loadingEntries[loadingEntries.length - 1]);
+                entries.push(loadingEntries[loadingEntries.length - 1].entry as Required<Entry>);
+                this._data.set(key, entries as [Entry, ...Entry[]]);
+            }
+            this._setAllocatedMemory(fd, allLoadingEntries);
         } catch (e) {
             console.error(e);
             // TODO: log invalid persistency
@@ -171,24 +172,37 @@ export class Persistency {
             dataFile: this.dataFile
         });
     }
-    private _setFreeMemoryData(fd:typeof this._fd, entries:Entry[]) {
-        // TODO: Test entries.sort
-        entries.sort((a, b) => a.dataLocation - b.dataLocation); // setAllocation needs ascending order
-        const dataAllocation = this._freeDataBlocks.setAllocation();
-        dataAllocation.add(0, MAGIC.length);
-        for (const entry of entries) {
-            dataAllocation.add(entry.dataLocation, entry.valueLocation + entry.valueSize);
+    private _setAllocatedMemory(fd:typeof this._fd, entries:LoadingEntry[]) {
+        this._setAllocatedEntries(fd, entries);
+        this._setFreeMemoryData(fd, entries);
+    }
+    private _setAllocatedEntries(fd:typeof this._fd, entries:LoadingEntry[]) {
+        entries.sort((a, b) => a.location - b.location);
+        const entrySize = EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.SIZE;
+        const entryAllocation = this._entriesMemory.setAllocation();
+        for (const loadingEntry of entries) {
+            loadingEntry.entry.block = entryAllocation.add(loadingEntry.location, loadingEntry.location + entrySize, loadingEntry.entry as Required<Entry>);
+        }
+        fd.entries.truncate(entryAllocation.finish());
+    }
+    private _setFreeMemoryData(fd:typeof this._fd, entries:LoadingEntry[]) {
+        entries.sort((a, b) => a.dataLocation - b.dataLocation);
+        const dataAllocation = this._dataMemory.setAllocation();
+        for (const loadingEntry of entries) {
+            loadingEntry.entry.dataBlock = dataAllocation.add(loadingEntry.dataLocation, loadingEntry.entry.valueLocation + loadingEntry.valueSize, loadingEntry.entry as Required<Entry>);
         }
         fd.data.truncate(dataAllocation.finish());
     }
-    private _getFreeEntryLocation() {
-        return this._freeEntryBlocks.alloc(EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.SIZE);
+    private _getFreeEntryLocation(entry:PartialEntry) {
+        entry.block = this._entriesMemory.alloc(EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.SIZE, entry as Required<Entry>);
+        return entry as PartialDataEntry;
     }
-    private _getFreeDataLocation(size:number) {
-        return this._freeDataBlocks.alloc(size);
+    private _getFreeDataLocation(size:number, entry:PartialDataEntry) {
+        entry.dataBlock = this._dataMemory.alloc(size, entry as Required<Entry>);
+        return entry as Entry;
     }
     private _freeEntry(entry:Entry) {
-        const endFile = this._freeEntryBlocks.free(entry.location, entry.location + EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.SIZE);
+        const endFile = this._entriesMemory.free(entry.block);
         if (endFile != null) {
             this._fd.entries.truncate(endFile);
         } else {
@@ -196,25 +210,25 @@ export class Persistency {
         }
     }
     private _freeData(entry:Entry) {
-        const endFile = this._freeDataBlocks.free(entry.dataLocation, entry.valueLocation + entry.valueSize);
+        const endFile = this._dataMemory.free(entry.dataBlock);
         if (endFile != null) {
             this._fd.data.truncate(endFile); // No need to fsync after this
+        } else {
+            // Buscar la última entrada y meterla en este hueco
         }
     }
     private _deleteEntry(entry:Entry) {
-        this._fd.entries.write(EMPTY_ENTRY, entry.location); // No need to fsync after this. The worse that can happen is that data is not deleted if it crashes
+        this._fd.entries.write(EMPTY_ENTRY, entry.block.start); // No need to fsync after this. The worse that can happen is that data is not deleted if it crashes
         this._freeEntry(entry);
         this._freeData(entry);
     }
     private _purgeEntry(key:string, entry:Entry) {
-        if (!entry.purging) {
-            entry.purging = true;
-            this._purgeEntries.push({
-                key: key,
-                entry: entry,
-                ts: this._context.now() + this.reclaimTimeout
-            });
-        }
+        entry.purging = true;
+        this._purgeEntries.push({
+            key: key,
+            entry: entry,
+            ts: this._context.now() + this.reclaimTimeout
+        });
     }
     private _checkPurge() {
         if (this._purgeEntries.length > 0) {
@@ -240,7 +254,7 @@ export class Persistency {
         }
     }
     private _getEntry(entry:Entry) {
-        const valueBuffer = Buffer.allocUnsafe(entry.valueSize);
+        const valueBuffer = Buffer.allocUnsafe(entry.dataBlock.end - entry.valueLocation);
         this._fd.data.read(valueBuffer, entry.valueLocation, true); // Always read from file so can have more data than available RAM. The OS will handle the caché
         return valueBuffer;
     }
@@ -258,15 +272,15 @@ export class Persistency {
         const entries = this._data.get(key);
         const keyBuffer = Buffer.from(key);
         const dataHash = shake128(keyBuffer, value);
-        const dataLocation = this._getFreeDataLocation(keyBuffer.length + value.length);
-        const entry:Entry = {
-            location: this._getFreeEntryLocation(),
-            dataLocation: dataLocation,
-            valueLocation: dataLocation + keyBuffer.length,
-            valueSize: value.length,
+        const partialEntry = this._getFreeEntryLocation({
+            block: null,
+            dataBlock: null,
+            valueLocation: 0,
             dataVersion: 0,
             purging: false
-        };
+        });
+        const entry = this._getFreeDataLocation(keyBuffer.length + value.length, partialEntry);
+        entry.valueLocation = entry.dataBlock.start + keyBuffer.length;
         if (entries) {
             const lastEntry = entries[entries.length - 1];
             entry.dataVersion = (lastEntry.dataVersion + 1) & Values.UINT_32 >>> 0;
@@ -282,8 +296,8 @@ export class Persistency {
         entryHeaderBuffer[EntryHeaderOffsets_V0.ENTRY_VERSION] = 0;
 
         // Workaround to write 7 bytes in nodejs
-        const dataLocationByte7 = (dataLocation / Values.UINT_48_ROLLOVER) | 0;
-        entryBuffer.writeUIntBE(dataLocation - (dataLocationByte7 * Values.UINT_48_ROLLOVER), EntryOffsets_V0.LOCATION, Bytes.UINT_48);
+        const dataLocationByte7 = (entry.dataBlock.start / Values.UINT_48_ROLLOVER) | 0;
+        entryBuffer.writeUIntBE(entry.dataBlock.start - (dataLocationByte7 * Values.UINT_48_ROLLOVER), EntryOffsets_V0.LOCATION, Bytes.UINT_48);
         entryBuffer[EntryOffsets_V0.LOCATION + 6] = dataLocationByte7;
 
         dataHash.copy(entryBuffer, EntryOffsets_V0.DATA_HASH);
@@ -293,12 +307,12 @@ export class Persistency {
         const entryHash = shake128(entryBuffer);
         entryHash.copy(entryHeaderBuffer, EntryHeaderOffsets_V0.ENTRY_HASH);
 
-        this._fd.data.write(keyBuffer, dataLocation);
-        this._fd.data.write(value, dataLocation + keyBuffer.length);
+        this._fd.data.write(keyBuffer, entry.dataBlock.start);
+        this._fd.data.write(value, entry.dataBlock.start + keyBuffer.length);
         this._fd.data.fsync();
         
-        this._fd.entries.write(entryHeaderBuffer, entry.location);
-        this._fd.entries.write(entryBuffer, entry.location + entryHeaderBuffer.length);
+        this._fd.entries.write(entryHeaderBuffer, entry.block.start);
+        this._fd.entries.write(entryBuffer, entry.block.start + entryHeaderBuffer.length);
         this._fd.entries.fsync();
 
         if (entries && this.reclaimTimeout <= 0) {
@@ -344,8 +358,8 @@ export class Persistency {
     }
     getAllocatedBlocks() {
         return {
-            entries: this._freeEntryBlocks.getAllocatedBlocks(),
-            data: this._freeDataBlocks.getAllocatedBlocks()
+            entries: this._entriesMemory.getAllocatedRanges(),
+            data: this._dataMemory.getAllocatedRanges()
         };
     }
     close() {
