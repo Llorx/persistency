@@ -87,16 +87,16 @@ export class Persistency {
                         }
                         const storedEntryHash = entryHeaderBuffer.subarray(EntryHeaderOffsets_V0.ENTRY_HASH, EntryHeaderOffsets_V0.ENTRY_HASH + Bytes.SHAKE_128);
                         entriesReader.read(entryBuffer, true);
-                        const entryHash = shake128(entryBuffer);
+                        const entryHash = shake128(entryBuffer.subarray(0, EntryOffsets_V0.DATA_HASH));
                         if (!entryHash.equals(storedEntryHash)) {
                             throw new Error("Invalid entry hash");
                         }
                         const dataLocation = entryBuffer.readUIntBE(EntryOffsets_V0.LOCATION, Bytes.UINT_48) + (entryBuffer[EntryOffsets_V0.LOCATION + 6] * Values.UINT_48_ROLLOVER); // Maximum read value in nodejs is 6 bytes, so we need a workaround for 7 bytes
                         if (dataLocation > 0) {
-                            const storedDataHash = entryBuffer.subarray(EntryOffsets_V0.DATA_HASH, EntryOffsets_V0.DATA_HASH + Bytes.SHAKE_128);
                             const dataVersion = entryBuffer.readUInt32BE(EntryOffsets_V0.DATA_VERSION);
                             const keySize = entryBuffer.readUInt32BE(EntryOffsets_V0.KEY_SIZE);
                             const valueSize = entryBuffer.readUInt32BE(EntryOffsets_V0.VALUE_SIZE);
+                            const storedDataHash = entryBuffer.subarray(EntryOffsets_V0.DATA_HASH, EntryOffsets_V0.DATA_HASH + Bytes.SHAKE_128);
                             const dataBuffer = Buffer.allocUnsafe(keySize + valueSize);
                             fd.data.read(dataBuffer, dataLocation, true);
                             const dataHash = shake128(dataBuffer);
@@ -104,7 +104,7 @@ export class Persistency {
                                 // TODO: Test this
                                 throw new Error("Invalid data hash");
                             }
-                            const key = (dataBuffer as any).utf8Slice(0, keySize); // small optimization non-documented methods
+                            const key:string = (dataBuffer as any).utf8Slice(0, keySize); // small optimization non-documented methods
                             const valueLocation = dataLocation + keySize;
                             const loadingEntry:LoadingEntry = {
                                 entry: {
@@ -138,8 +138,12 @@ export class Persistency {
                         if ((a.entry.dataVersion - b.entry.dataVersion) >= Values.UINT_32_HALF) {
                             return -1;
                         }
-                    } else if ((b.entry.dataVersion - a.entry.dataVersion) < Values.UINT_32_HALF) {
-                        return -1;
+                    } else if (a.entry.dataVersion < b.entry.dataVersion) {
+                        if ((b.entry.dataVersion - a.entry.dataVersion) < Values.UINT_32_HALF) {
+                            return -1;
+                        }
+                    } else {
+                        return b.location - a.location;
                     }
                     return 1;
                 });
@@ -253,7 +257,7 @@ export class Persistency {
             }
         }
     }
-    private _getEntry(entry:Entry) {
+    private _getEntryValue(entry:Entry) {
         const valueBuffer = Buffer.allocUnsafe(entry.dataBlock.end - entry.valueLocation);
         this._fd.data.read(valueBuffer, entry.valueLocation, true); // Always read from file so can have more data than available RAM. The OS will handle the caché
         return valueBuffer;
@@ -263,7 +267,7 @@ export class Persistency {
     }
     *cursor():Generator<[string, Buffer], null, void> {
         for (const [key, entry] of this._data) {
-            yield [key, this._getEntry(entry[entry.length - 1])];
+            yield [key, this._getEntryValue(entry[entry.length - 1])];
         }
         return null;
     }
@@ -304,7 +308,7 @@ export class Persistency {
         entryBuffer.writeUInt32BE(entry.dataVersion, EntryOffsets_V0.DATA_VERSION);
         entryBuffer.writeUInt32BE(keyBuffer.length, EntryOffsets_V0.KEY_SIZE);
         entryBuffer.writeUInt32BE(value.length, EntryOffsets_V0.VALUE_SIZE);
-        const entryHash = shake128(entryBuffer);
+        const entryHash = shake128(entryBuffer.subarray(0, EntryOffsets_V0.DATA_HASH));
         entryHash.copy(entryHeaderBuffer, EntryHeaderOffsets_V0.ENTRY_HASH);
 
         this._fd.data.write(keyBuffer, entry.dataBlock.start);
@@ -327,7 +331,7 @@ export class Persistency {
         const entries = this._data.get(key);
         if (entries) {
             const lastEntry = entries[entries.length - 1];
-            return this._getEntry(lastEntry);
+            return this._getEntryValue(lastEntry);
         } else {
             return null;
         }
