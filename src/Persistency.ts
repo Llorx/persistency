@@ -87,16 +87,16 @@ export class Persistency {
                         }
                         const storedEntryHash = entryHeaderBuffer.subarray(EntryHeaderOffsets_V0.ENTRY_HASH, EntryHeaderOffsets_V0.ENTRY_HASH + Bytes.SHAKE_128);
                         entriesReader.read(entryBuffer, true);
-                        const entryHash = shake128(entryBuffer.subarray(0, EntryOffsets_V0.DATA_HASH));
+                        const entryHash = shake128(entryBuffer);
                         if (!entryHash.equals(storedEntryHash)) {
                             throw new Error("Invalid entry hash");
                         }
                         const dataLocation = entryBuffer.readUIntBE(EntryOffsets_V0.LOCATION, Bytes.UINT_48) + (entryBuffer[EntryOffsets_V0.LOCATION + 6] * Values.UINT_48_ROLLOVER); // Maximum read value in nodejs is 6 bytes, so we need a workaround for 7 bytes
                         if (dataLocation > 0) {
+                            const storedDataHash = entryBuffer.subarray(EntryOffsets_V0.DATA_HASH, EntryOffsets_V0.DATA_HASH + Bytes.SHAKE_128);
                             const dataVersion = entryBuffer.readUInt32BE(EntryOffsets_V0.DATA_VERSION);
                             const keySize = entryBuffer.readUInt32BE(EntryOffsets_V0.KEY_SIZE);
                             const valueSize = entryBuffer.readUInt32BE(EntryOffsets_V0.VALUE_SIZE);
-                            const storedDataHash = entryBuffer.subarray(EntryOffsets_V0.DATA_HASH, EntryOffsets_V0.DATA_HASH + Bytes.SHAKE_128);
                             const dataBuffer = Buffer.allocUnsafe(keySize + valueSize);
                             fd.data.read(dataBuffer, dataLocation, true);
                             const dataHash = shake128(dataBuffer);
@@ -308,7 +308,7 @@ export class Persistency {
         entryBuffer.writeUInt32BE(entry.dataVersion, EntryOffsets_V0.DATA_VERSION);
         entryBuffer.writeUInt32BE(keyBuffer.length, EntryOffsets_V0.KEY_SIZE);
         entryBuffer.writeUInt32BE(value.length, EntryOffsets_V0.VALUE_SIZE);
-        const entryHash = shake128(entryBuffer.subarray(0, EntryOffsets_V0.DATA_HASH));
+        const entryHash = shake128(entryBuffer);
         entryHash.copy(entryHeaderBuffer, EntryHeaderOffsets_V0.ENTRY_HASH);
 
         this._fd.data.write(keyBuffer, entry.dataBlock.start);

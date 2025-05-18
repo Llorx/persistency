@@ -28,9 +28,9 @@ export const enum EntryHeaderOffsets_V0 {
 }
 export const enum EntryOffsets_V0 {
     LOCATION = 0,
-    DATA_VERSION = LOCATION + Bytes.UINT_56,
+    DATA_HASH = LOCATION + Bytes.UINT_56,
+    DATA_VERSION = DATA_HASH + Bytes.SHAKE_128,
     KEY_SIZE = DATA_VERSION + Bytes.UINT_32,
     VALUE_SIZE = KEY_SIZE + Bytes.UINT_32,
-    DATA_HASH = VALUE_SIZE + Bytes.UINT_56,
-    SIZE = DATA_HASH + Bytes.SHAKE_128
+    SIZE = VALUE_SIZE + Bytes.UINT_32
 }
