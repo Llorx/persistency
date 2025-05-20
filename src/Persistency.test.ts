@@ -4,7 +4,7 @@ import * as Path from "path";
 
 import test, { After, asyncMonad } from "arrange-act-assert";
 
-import { assertDeepEqual, assertEqual, newOpenFilesContext } from "./testUtils";
+import { assertDeepEqual, assertEqual } from "./testUtils";
 import { Persistency, PersistencyContext, PersistencyOptions } from "./Persistency";
 import * as constants from "./constants";
 import { shake128 } from "./utils";
@@ -104,8 +104,7 @@ test.describe("Persistency", test => {
             },
             now() {
                 return now;
-            },
-            fs: newOpenFilesContext()
+            }
         };
     }
     // end helpers

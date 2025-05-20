@@ -9,10 +9,10 @@ export type PersistencyOptions = {
     folder:string;
     reclaimTimeout?:number;
 };
-export type PersistencyContext = {
+export type PersistencyContext = Partial<{
     now():number; // Inject "world access" dependency for easier testing
     fs:OpenFilesContext;
-};
+}>;
 type Entry = {
     block:Block<Entry>;
     dataBlock:Block<Entry>;
@@ -44,10 +44,16 @@ export class Persistency {
     private _purgeEntries:{key:string; entry:Entry; ts:number}[] = [];
     private _entriesMemory = new MemoryBlocks<Entry>(MAGIC.length);
     private _dataMemory = new MemoryBlocks<Entry>(MAGIC.length);
-    constructor(options:PersistencyOptions, private _context:PersistencyContext = { now: Date.now, fs: Fs }) {
+    private _context;
+    constructor(options:PersistencyOptions, context?:PersistencyContext) {
         if (!options.folder) {
             throw new Error("Invalid folder");
         }
+        this._context = {
+            now: Date.now,
+            fs: Fs,
+            ...context
+        };
         this.entriesFile = Path.join(options.folder, "entries.db");
         this.dataFile = Path.join(options.folder, "data.db");
         this.reclaimTimeout = options.reclaimTimeout ?? 10000;
