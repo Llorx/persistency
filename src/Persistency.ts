@@ -1,3 +1,4 @@
+import * as Fs from "fs";
 import * as Path from "path";
 
 import { openFiles, OpenFilesContext, shake128 } from "./utils";
