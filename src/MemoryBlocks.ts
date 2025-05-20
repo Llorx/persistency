@@ -14,6 +14,25 @@ export type Block<T> = {
 export class MemoryBlocks<T = any> {
     private _firstRange:BlockRange<T>|null = null;
     constructor(readonly offset:number) {}
+    private _mergeRange(range:BlockRange<T>) {
+        range.last = range.next!.last;
+        range.next = range.next!.next;
+        if (range.next) {
+            range.next.prev = range;
+        }
+    }
+    private _splitRange(range:BlockRange<T>, currentLast:Block<T>, nextFirst:Block<T>) {
+        range.next = {
+            first: nextFirst,
+            last: range.last,
+            prev: range,
+            next: range.next
+        };
+        range.last = currentLast;
+        if (range.next.next) {
+            range.next.next.prev = range.next;
+        }
+    }
     setAllocation() {
         // Assume updating in ascending order, so "next" is always going to be the last block
         let next:BlockRange<T>|null = null;
@@ -128,11 +147,7 @@ export class MemoryBlocks<T = any> {
                     range.last = block;
                     // If it fills the gap perfectly, merge the ranges to a single range
                     if (range.last.end === range.next.first.start) {
-                        range.last = range.next.last;
-                        range.next = range.next.next;
-                        if (range.next) {
-                            range.next.prev = range;
-                        }
+                        this._mergeRange(range);
                     }
                     return block;
                 }
@@ -165,17 +180,7 @@ export class MemoryBlocks<T = any> {
                     // shrink range end
                     range.last = block.prev!;
                 } else {
-                    // Split the range
-                    range.next = {
-                        first: block.next!,
-                        last: range.last,
-                        prev: range,
-                        next: range.next
-                    };
-                    range.last = block.prev!;
-                    if (range.next.next) {
-                        range.next.next.prev = range.next;
-                    }
+                    this._splitRange(range, block.prev!, block.next!);
                 }
                 break;
             }
@@ -193,6 +198,40 @@ export class MemoryBlocks<T = any> {
         } else {
             return this.offset;
         }
+    }
+    resize(block:Block<T>, size:number) {
+        const blockSize = block.end - block.start;
+        if (size === blockSize) {
+            // No need to resize
+            return null;
+        }
+        if (!block.next) {
+            // Simply change sizes and return the new end size
+            block.end = block.start + size;
+            return block.end;
+        }
+        const freeSize = block.next.start - block.start;
+        if (size > freeSize) {
+            throw new Error("Can't resize a block bigger than free space");
+        }
+        // Detect if needs to split or merge ranges
+        if (size === freeSize || blockSize === freeSize) {
+            // Search for range to split/merge
+            let range:BlockRange<T>|null = this._firstRange!;
+            do {
+                if (range.last.end > block.start) {
+                    if (size === freeSize) {
+                        this._mergeRange(range);
+                    } else {
+                        this._splitRange(range, block, block.next);
+                    }
+                    break;
+                }
+                range = range.next;
+            } while (range);
+        }
+        block.end = block.start + size;
+        return null;
     }
     getAllocatedRanges() {
         const blocks:[start:number, end:number][] = [];
