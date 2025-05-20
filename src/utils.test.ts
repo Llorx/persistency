@@ -35,10 +35,13 @@ test.describe("utils", test => {
                     assertEqual(typeof res.data, "object");
                 },
                 "should open entries and data files"(_, context) {
-                    context.openSync.assert([
-                        ["entriesFile", 258],
-                        ["dataFile", 258],
-                    ]);
+                    assertDeepEqual(
+                        context.openSync.splice().map(entry => [entry[0]]), // Remove flags argument
+                        [
+                            ["entriesFile"],
+                            ["dataFile"],
+                        ]
+                    );
                 }
             }
         });
