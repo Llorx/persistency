@@ -1,10 +1,13 @@
 import * as Fs from "fs";
 import * as Crypto from "crypto";
 
-function read(fd:number, buffer:Buffer, position:number, emptyBufferError:boolean) {
+type ReadContext = {
+    readSync(fd:number, buffer:Buffer, offset:number, length:number, position:number):number;
+}
+function read(fd:number, buffer:Buffer, position:number, emptyBufferError:boolean, context:ReadContext) {
     let offset = 0;
     do {
-        const bytesRead = Fs.readSync(fd, buffer, offset, buffer.length - offset, position + offset);
+        const bytesRead = context.readSync(fd, buffer, offset, buffer.length - offset, position + offset);
         offset += bytesRead;
         if (bytesRead === 0) {
             if (emptyBufferError || offset > 0) {
@@ -15,7 +18,7 @@ function read(fd:number, buffer:Buffer, position:number, emptyBufferError:boolea
     } while (offset !== buffer.length);
     return true;
 }
-function reader(fd:number) {
+function reader(fd:number, context:ReadContext) {
     let offset = 0;
     let done = false;
     return {
@@ -30,13 +33,37 @@ function reader(fd:number) {
                 return false;
             }
             try {
-                const result = read(fd, buffer, offset, emptyBufferError);
+                const result = read(fd, buffer, offset, emptyBufferError, context);
                 offset += buffer.length;
                 return result;
             } catch (e) {
                 done = true;
                 throw e;
             }
+        }
+    };
+}
+type FdActionContext = {
+    writeSync(fd:number, buffer:Buffer, offset:number, length:number, position:number):void;
+    fsyncSync(fd:number):void;
+    ftruncateSync(fd:number, length:number):void;
+} & ReadContext;
+function fdAction(fd:number, context:FdActionContext) {
+    return {
+        reader() {
+            return reader(fd, context);
+        },
+        write(buffer:Buffer, position:number) {
+            context.writeSync(fd, buffer, 0, buffer.length, position);
+        },
+        read(buffer:Buffer, position:number, errorOnEOF:boolean) {
+            return read(fd, buffer, position, errorOnEOF, context);
+        },
+        fsync() {
+            context.fsyncSync(fd);
+        },
+        truncate(len:number) {
+            context.ftruncateSync(fd, len);
         }
     };
 }
@@ -48,40 +75,25 @@ export function shake128(buffer:Buffer, buffer2?:Buffer) {
     }
     return hash.digest();
 }
-export function fdAction(fd:number) {
-    return {
-        reader() {
-            return reader(fd);
-        },
-        write(buffer:Buffer, position:number) {
-            Fs.writeSync(fd, buffer, 0, buffer.length, position);
-        },
-        read(buffer:Buffer, position:number, errorOnEOF:boolean) {
-            return read(fd, buffer, position, errorOnEOF);
-        },
-        fsync() {
-            Fs.fsyncSync(fd);
-        },
-        truncate(len:number) {
-            Fs.ftruncateSync(fd, len);
-        }
-    };
-}
-export function openFiles(options:{entriesFile:string; dataFile:string;}) {
+export type OpenFilesContext = {
+    openSync(path:Fs.PathLike, flags:Fs.OpenMode):number;
+    closeSync(fd:number):void;
+} & FdActionContext;
+export function openFiles(options:{entriesFile:string; dataFile:string;}, context:OpenFilesContext) {
     let entriesFd;
     let dataFd;
     try {
-        entriesFd = Fs.openSync(options.entriesFile, Fs.constants.O_CREAT | Fs.constants.O_RDWR);
-        dataFd = Fs.openSync(options.dataFile, Fs.constants.O_CREAT | Fs.constants.O_RDWR);
+        entriesFd = context.openSync(options.entriesFile, Fs.constants.O_CREAT | Fs.constants.O_RDWR);
+        dataFd = context.openSync(options.dataFile, Fs.constants.O_CREAT | Fs.constants.O_RDWR);
     } catch (e) {
         if (entriesFd != null) {
             try {
-                Fs.closeSync(entriesFd);
+                context.closeSync(entriesFd);
             } catch (e) {}
         }
         if (dataFd != null) {
             try {
-                Fs.closeSync(dataFd);
+                context.closeSync(dataFd);
             } catch (e) {}
         }
         console.error(e);
@@ -92,16 +104,16 @@ export function openFiles(options:{entriesFile:string; dataFile:string;}) {
         close() {
             if (entriesFd != null) {
                 try {
-                    Fs.closeSync(entriesFd);
+                    context.closeSync(entriesFd);
                 } catch (e) {}
             }
             if (dataFd != null) {
                 try {
-                    Fs.closeSync(dataFd);
+                    context.closeSync(dataFd);
                 } catch (e) {}
             }
         },
-        entries: fdAction(entriesFd),
-        data: fdAction(dataFd)
+        entries: fdAction(entriesFd, context),
+        data: fdAction(dataFd, context)
     };
 }

@@ -1,6 +1,6 @@
 import * as Path from "path";
 
-import { openFiles, shake128 } from "./utils";
+import { openFiles, OpenFilesContext, shake128 } from "./utils";
 import { MemoryBlocks, Block } from "./MemoryBlocks";
 import { EMPTY_ENTRY, Bytes, EntryHeaderOffsets_V0, EntryOffsets_V0, MAGIC, Values } from "./constants";
 
@@ -10,6 +10,7 @@ export type PersistencyOptions = {
 };
 export type PersistencyContext = {
     now():number; // Inject "world access" dependency for easier testing
+    fs:OpenFilesContext;
 };
 type Entry = {
     block:Block<Entry>;
@@ -42,7 +43,7 @@ export class Persistency {
     private _purgeEntries:{key:string; entry:Entry; ts:number}[] = [];
     private _entriesMemory = new MemoryBlocks<Entry>(MAGIC.length);
     private _dataMemory = new MemoryBlocks<Entry>(MAGIC.length);
-    constructor(options:PersistencyOptions, private _context:PersistencyContext = { now: Date.now }) {
+    constructor(options:PersistencyOptions, private _context:PersistencyContext = { now: Date.now, fs: Fs }) {
         if (!options.folder) {
             throw new Error("Invalid folder");
         }
@@ -55,7 +56,7 @@ export class Persistency {
         const fd = openFiles({
             entriesFile: this.entriesFile,
             dataFile: this.dataFile
-        });
+        }, this._context.fs);
         try {
             const entryHeaderBuffer = Buffer.allocUnsafe(EntryHeaderOffsets_V0.SIZE);
             const entryBuffer = Buffer.allocUnsafe(EntryOffsets_V0.SIZE);
@@ -174,7 +175,7 @@ export class Persistency {
         return openFiles({
             entriesFile: this.entriesFile,
             dataFile: this.dataFile
-        });
+        }, this._context.fs);
     }
     private _setAllocatedMemory(fd:typeof this._fd, entries:LoadingEntry[]) {
         this._setAllocatedEntries(fd, entries);
