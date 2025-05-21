@@ -4,19 +4,20 @@ import * as Crypto from "crypto";
 type ReadContext = {
     readSync(fd:number, buffer:Buffer, offset:number, length:number, position:number):number;
 }
-function read(fd:number, buffer:Buffer, position:number, emptyBufferError:boolean, context:ReadContext) {
+function read(fd:number, buffer:Buffer, position:number, read0Error:boolean, context:ReadContext) {
     let offset = 0;
     do {
         const bytesRead = context.readSync(fd, buffer, offset, buffer.length - offset, position + offset);
         offset += bytesRead;
         if (bytesRead === 0) {
-            if (emptyBufferError || offset > 0) {
+            if (read0Error || offset > 0) {
+                // Partial read always fails
                 throw new Error("Invalid file");
             }
-            return false;
+            return true;
         }
     } while (offset !== buffer.length);
-    return true;
+    return false;
 }
 function reader(fd:number, context:ReadContext) {
     let offset = 0;
@@ -28,12 +29,12 @@ function reader(fd:number, context:ReadContext) {
         advance(count:number) {
             offset += count;
         },
-        read(buffer:Buffer, emptyBufferError:boolean) {
+        read(buffer:Buffer, read0Error:boolean) {
             if (done) {
-                return false;
+                return true;
             }
             try {
-                const result = read(fd, buffer, offset, emptyBufferError, context);
+                const result = read(fd, buffer, offset, read0Error, context);
                 offset += buffer.length;
                 return result;
             } catch (e) {

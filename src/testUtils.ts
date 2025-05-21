@@ -1,4 +1,9 @@
 import * as Assert from "assert";
+import * as Fs from "fs";
+import * as Path from "path";
+import * as Os from "os";
+
+import { After } from "arrange-act-assert";
 import { OpenFilesContext } from "./utils";
 
 const SPIED_OBJECT = Symbol();
@@ -94,25 +99,9 @@ function spy<T extends object>(obj:T) {
 }
 
 export function newOpenFilesContext() {
-    const context:OpenFilesContext = {
-        closeSync(_fd) {
-            
-        },
-        fsyncSync(_fd) {
-            
-        },
-        ftruncateSync(_fd, _length) {
-            
-        },
-        openSync(_path, _flags) {
-            return 0;
-        },
-        readSync(_fd, _buffer, _offset, _length, _position) {
-            return 1;
-        },
-        writeSync(_fd, _buffer, _offset, _length, _position) {
-            
-        }
-    };
-    return spy(context);
+    return spy(Fs as OpenFilesContext);
+}
+
+export async function tempFolder(after:After) {
+    return after(await Fs.promises.mkdtemp(Path.join(Os.tmpdir(), "persistency-tests-")), folder => Fs.promises.rm(folder, { recursive: true, force: true }));
 }

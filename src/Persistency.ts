@@ -70,14 +70,14 @@ export class Persistency {
             const data = new Map<string, [LoadingEntry, ...LoadingEntry[]]>();
             const magic = Buffer.allocUnsafe(4);
             const entriesReader = fd.entries.reader();
-            if (fd.data.read(magic, 0, false)) {
+            if (!fd.data.read(magic, 0, false)) {
                 if (!magic.equals(MAGIC)) {
                     throw new Error("Data file is not a persistency one");
                 }
             } else {
                 fd.data.write(MAGIC, 0);
             }
-            if (!entriesReader.read(magic, false)) {
+            if (entriesReader.read(magic, false)) {
                 fd.entries.write(MAGIC, 0);
             } else {
                 if (!magic.equals(MAGIC)) {
@@ -86,7 +86,7 @@ export class Persistency {
                 while (true) {
                     const entryLocation = entriesReader.offset;
                     try {
-                        if (!entriesReader.read(entryHeaderBuffer, false)) {
+                        if (entriesReader.read(entryHeaderBuffer, false)) {
                             break;
                         }
                         if (entryHeaderBuffer[EntryHeaderOffsets_V0.ENTRY_VERSION] !== 0) {
