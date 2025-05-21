@@ -13,12 +13,17 @@ export type PersistencyContext = Partial<{
     now():number; // Inject "world access" dependency for easier testing
     fs:OpenFilesContext;
 }>;
+const enum Purging {
+    None,
+    Entry,
+    EntryAndData
+}
 type Entry = {
     block:Block<Entry>;
     dataBlock:Block<Entry>;
     valueLocation:number;
     dataVersion:number;
-    purging:boolean;
+    purging:Purging;
 };
 type PartialEntry = Omit<Entry, "block"|"dataBlock"> & {
     block:Block<Entry>|null;
@@ -44,6 +49,8 @@ export class Persistency {
     private _purgeEntries:{key:string; entry:Entry; ts:number}[] = [];
     private _entriesMemory = new MemoryBlocks<Entry>(MAGIC.length);
     private _dataMemory = new MemoryBlocks<Entry>(MAGIC.length);
+    private _lastEntryBlock:Block<Entry>|null = null;
+    private _lastDataBlock:Block<Entry>|null = null;
     private _context;
     constructor(options:PersistencyOptions, context?:PersistencyContext) {
         if (!options.folder) {
@@ -120,7 +127,7 @@ export class Persistency {
                                     dataBlock: null,
                                     dataVersion: dataVersion,
                                     valueLocation: valueLocation,
-                                    purging: false
+                                    purging: Purging.None
                                 },
                                 location: entryLocation,
                                 dataLocation: dataLocation,
@@ -158,7 +165,12 @@ export class Persistency {
                 const entries = [];
                 for (let i = 0; i < loadingEntries.length - 1; i++) {
                     if (this.reclaimTimeout > 0) {
-                        this._purgeEntry(key, loadingEntries[i].entry as Required<Entry>);
+                        const nextEntry = loadingEntries[i + 1].entry;
+                        if (nextEntry.dataVersion === loadingEntries[i].entry.dataVersion) {
+                            this._purgeEntry(key, loadingEntries[i].entry as Required<Entry>);
+                        } else {
+                            this._purgeEntryAndData(key, loadingEntries[i].entry as Required<Entry>);
+                        }
                         entries.push(loadingEntries[i].entry as Required<Entry>);
                         allLoadingEntries.push(loadingEntries[i]);
                     } else {
@@ -170,6 +182,8 @@ export class Persistency {
                 this._data.set(key, entries as [Entry, ...Entry[]]);
             }
             this._setAllocatedMemory(fd, allLoadingEntries);
+            // TODO: Buscar los huecos de datas y hacer compact
+            // Después buscar los huecos de entries y hacer compact
         } catch (e) {
             console.error(e);
             // TODO: log invalid persistency
@@ -184,6 +198,117 @@ export class Persistency {
             dataFile: this.dataFile
         }, this._context.fs);
     }
+    private _compactEntryAndData(entry:Entry) {
+        if (entry.dataBlock.next) {
+            const freeSize = entry.dataBlock.next.start - entry.dataBlock.start;
+            let last = this._lastDataBlock;
+            while (last && last.data !== entry) {
+                if (last.data.purging === Purging.None) {
+                    const dataSize = last.end - last.start;
+                    if (dataSize <= freeSize) {
+                        this._dataMemory.resize(entry.dataBlock, dataSize);
+                        const dataBuffer = Buffer.allocUnsafe(dataSize);
+                        this._fd.data.read(dataBuffer, last.start, true)
+                        const keySize = last.data.valueLocation - last.data.dataBlock.start;
+                        const key:string = (dataBuffer as any).utf8Slice(0, last.data.valueLocation - last.data.dataBlock.start); // small optimization non-documented methods
+                        const entries = this._data.get(key)!;
+
+                        const entryHeaderBuffer = Buffer.allocUnsafe(EntryHeaderOffsets_V0.SIZE);
+                        const entryBuffer = Buffer.allocUnsafe(EntryOffsets_V0.SIZE);
+                        entryHeaderBuffer[EntryHeaderOffsets_V0.ENTRY_VERSION] = 0;
+
+                        // TODO: Duplicado en el método set()...
+                        const newEntry:Entry = {
+                            block: entry.block,
+                            dataBlock: entry.dataBlock,
+                            valueLocation: entry.dataBlock.start + keySize,
+                            dataVersion: last.data.dataVersion,
+                            purging: Purging.None
+                        };
+                        // Testear que valueLocation cambia
+                        // testear que dataVersion cambia
+                        // testear que block y dataBlock apuntan al mismo sitio
+
+                        const lastEntry = entries[entries.length - 1];
+                        newEntry.dataVersion = (lastEntry.dataVersion + 1) & Values.UINT_32 >>> 0;
+                        entries.push(newEntry);
+
+                        const dataLocationByte7 = (newEntry.dataBlock.start / Values.UINT_48_ROLLOVER) | 0;
+                        entryBuffer.writeUIntBE(newEntry.dataBlock.start - (dataLocationByte7 * Values.UINT_48_ROLLOVER), EntryOffsets_V0.LOCATION, Bytes.UINT_48);
+                        entryBuffer[EntryOffsets_V0.LOCATION + 6] = dataLocationByte7;
+
+                        const dataHash = shake128(dataBuffer);
+                        dataHash.copy(entryBuffer, EntryOffsets_V0.DATA_HASH);
+                        entryBuffer.writeUInt32BE(newEntry.dataVersion, EntryOffsets_V0.DATA_VERSION);
+                        entryBuffer.writeUInt32BE(keySize, EntryOffsets_V0.KEY_SIZE);
+                        entryBuffer.writeUInt32BE(dataSize - keySize, EntryOffsets_V0.VALUE_SIZE);
+                        const entryHash = shake128(entryBuffer);
+                        entryHash.copy(entryHeaderBuffer, EntryHeaderOffsets_V0.ENTRY_HASH);
+
+                        this._fd.data.write(dataBuffer, newEntry.dataBlock.start);
+                        this._fd.data.fsync();
+
+                        this._fd.entries.write(entryHeaderBuffer, newEntry.block.start);
+                        this._fd.entries.write(entryBuffer, newEntry.block.start + entryHeaderBuffer.length);
+                        this._fd.entries.fsync();
+
+                        // TODO: Testear qué ocurre si peta entre estos writes
+                        // Si se hace delete entry antes de estos writes, tendríamos un problema
+                        // por eso deleteentry va después, pero habría que hacer un test por si acaso
+
+                        if (this.reclaimTimeout <= 0) {
+                            entries.pop();
+                            this._compactEntryAndData(lastEntry);
+                            this._fd.entries.fsync();
+                        } else {
+                            this._purgeEntryAndData(key, lastEntry);
+                        }
+                        return;
+                    }
+                }
+                last = last.prev;
+            }
+        }
+        this._compactEntry(entry);
+        this._freeData(entry);
+    }
+    private _compactEntry(entry:Entry) {
+        if (entry.dataBlock.next) {
+            let last = this._lastDataBlock;
+            while (last && last.data !== entry) {
+                if (last.data.purging === Purging.None) {
+                    const entryBuffer = Buffer.allocUnsafe(last.end - last.start);
+                    this._fd.entries.read(entryBuffer, last.start, true);
+                    const keySize = last.data.valueLocation - last.data.dataBlock.start;
+                    const keyBuffer = Buffer.allocUnsafe(keySize);
+                    this._fd.data.read(keyBuffer, last.start, true)
+                    const key:string = (keyBuffer as any).utf8Slice(); // small optimization non-documented methods
+                    const entries = this._data.get(key)!;
+                    const newEntry:Entry = {
+                        block: entry.block,
+                        dataBlock: last.data.dataBlock,
+                        valueLocation: last.data.valueLocation,
+                        dataVersion: last.data.dataVersion,
+                        purging: Purging.None
+                    };
+                    entries.push(newEntry);
+                    this._fd.entries.write(entryBuffer, newEntry.block.start);
+                    this._fd.entries.fsync();
+                    if (this.reclaimTimeout <= 0) {
+                        entries.shift();
+                        this._compactEntry(last.data);
+                        this._fd.entries.fsync();
+                    } else {
+                        this._purgeEntry(key, last.data);
+                    }
+                    return;
+                }
+                last = last.prev;
+            }
+        }
+        this._fd.entries.write(EMPTY_ENTRY, entry.block.start);
+        this._freeEntry(entry);
+    }
     private _setAllocatedMemory(fd:typeof this._fd, entries:LoadingEntry[]) {
         this._setAllocatedEntries(fd, entries);
         this._setFreeMemoryData(fd, entries);
@@ -195,6 +320,9 @@ export class Persistency {
         for (const loadingEntry of entries) {
             loadingEntry.entry.block = entryAllocation.add(loadingEntry.location, loadingEntry.location + entrySize, loadingEntry.entry as Required<Entry>);
         }
+        if (entries.length > 0) {
+            this._lastEntryBlock = entries[entries.length - 1].entry.block;
+        }
         fd.entries.truncate(entryAllocation.finish());
     }
     private _setFreeMemoryData(fd:typeof this._fd, entries:LoadingEntry[]) {
@@ -202,6 +330,9 @@ export class Persistency {
         const dataAllocation = this._dataMemory.setAllocation();
         for (const loadingEntry of entries) {
             loadingEntry.entry.dataBlock = dataAllocation.add(loadingEntry.dataLocation, loadingEntry.entry.valueLocation + loadingEntry.valueSize, loadingEntry.entry as Required<Entry>);
+        }
+        if (entries.length > 0) {
+            this._lastDataBlock = entries[entries.length - 1].entry.dataBlock;
         }
         fd.data.truncate(dataAllocation.finish());
     }
@@ -214,28 +345,37 @@ export class Persistency {
         return entry as Entry;
     }
     private _freeEntry(entry:Entry) {
+        if (this._lastEntryBlock === entry.block) {
+            this._lastEntryBlock = entry.block.prev;
+        }
         const endFile = this._entriesMemory.free(entry.block);
         if (endFile != null) {
             this._fd.entries.truncate(endFile);
-        } else {
+        } else if (this._lastEntryBlock) {
             // Buscar la última entrada y meterla en este hueco
         }
     }
     private _freeData(entry:Entry) {
+        if (this._lastDataBlock === entry.block) {
+            this._lastDataBlock = entry.block.prev;
+        }
         const endFile = this._dataMemory.free(entry.dataBlock);
         if (endFile != null) {
             this._fd.data.truncate(endFile); // No need to fsync after this
-        } else {
+        } else if (this._lastDataBlock) {
             // Buscar la última entrada y meterla en este hueco
         }
     }
-    private _deleteEntry(entry:Entry) {
-        this._fd.entries.write(EMPTY_ENTRY, entry.block.start); // No need to fsync after this. The worse that can happen is that data is not deleted if it crashes
-        this._freeEntry(entry);
-        this._freeData(entry);
+    private _purgeEntryAndData(key:string, entry:Entry) {
+        entry.purging = Purging.EntryAndData;
+        this._purgeEntries.push({
+            key: key,
+            entry: entry,
+            ts: this._context.now() + this.reclaimTimeout
+        });
     }
     private _purgeEntry(key:string, entry:Entry) {
-        entry.purging = true;
+        entry.purging = Purging.Entry;
         this._purgeEntries.push({
             key: key,
             entry: entry,
@@ -249,12 +389,13 @@ export class Persistency {
             while (i < this._purgeEntries.length) {
                 const data = this._purgeEntries[i];
                 if (data.ts <= now) {
-                    this._deleteEntry(data.entry); // Delete instead of just freeing to avoid data never being overwritten and TS being the highest again
+                    if (data.entry.purging === Purging.EntryAndData) {
+                        this._compactEntryAndData(data.entry); // Delete instead of just freeing to avoid data never being overwritten and TS being the highest again
+                    } else {
+                        this._compactEntry(data.entry);
+                    }
                     const entries = this._data.get(data.key)!;
                     entries.splice(entries.indexOf(data.entry), 1);
-                    if (entries.length === 0) {
-                        this._data.delete(data.key);
-                    }
                 } else {
                     break;
                 }
@@ -269,6 +410,9 @@ export class Persistency {
         const valueBuffer = Buffer.allocUnsafe(entry.dataBlock.end - entry.valueLocation);
         this._fd.data.read(valueBuffer, entry.valueLocation, true); // Always read from file so can have more data than available RAM. The OS will handle the caché
         return valueBuffer;
+    }
+    compact() {
+        this._checkPurge();
     }
     count() {
         return this._data.size;
@@ -289,16 +433,22 @@ export class Persistency {
             dataBlock: null,
             valueLocation: 0,
             dataVersion: 0,
-            purging: false
+            purging: Purging.None
         });
         const entry = this._getFreeDataLocation(keyBuffer.length + value.length, partialEntry);
         entry.valueLocation = entry.dataBlock.start + keyBuffer.length;
+        if (!entry.block.next) {
+            this._lastEntryBlock = entry.block;
+        }
+        if (!entry.dataBlock.next) {
+            this._lastDataBlock = entry.dataBlock;
+        }
+        
+        // TODO: Duplicado en el método _compact()...
+        let lastEntry;
         if (entries) {
-            const lastEntry = entries[entries.length - 1];
+            lastEntry = entries[entries.length - 1];
             entry.dataVersion = (lastEntry.dataVersion + 1) & Values.UINT_32 >>> 0;
-            if (this.reclaimTimeout > 0) {
-                this._purgeEntry(key, lastEntry);
-            }
             entries.push(entry);
         } else {
             this._data.set(key, [ entry ]);
@@ -322,17 +472,23 @@ export class Persistency {
         this._fd.data.write(keyBuffer, entry.dataBlock.start);
         this._fd.data.write(value, entry.dataBlock.start + keyBuffer.length);
         this._fd.data.fsync();
-        
+
         this._fd.entries.write(entryHeaderBuffer, entry.block.start);
         this._fd.entries.write(entryBuffer, entry.block.start + entryHeaderBuffer.length);
         this._fd.entries.fsync();
 
+        // TODO: Testear qué ocurre si peta entre estos writes
+        // Si se hace delete entry antes de estos writes, tendríamos un problema
+        // por eso deleteentry va después, pero habría que hacer un test por si acaso
+
         if (entries && this.reclaimTimeout <= 0) {
             // Delete after data write
             for (const entry of entries.splice(0, entries.length - 1)) {
-                this._deleteEntry(entry);
+                this._compactEntryAndData(entry);
             }
             this._fd.entries.fsync(); // Another fsync to ensure that previous entry was fully written
+        } else if (lastEntry) {
+            this._purgeEntryAndData(key, lastEntry);
         }
     }
     get(key:string) {
@@ -349,10 +505,10 @@ export class Persistency {
         if (entries) {
             let isPurging = false;
             for (const entry of entries) {
-                if (entry.purging) {
+                if (entry.purging !== Purging.None) {
                     isPurging = true;
                 }
-                this._deleteEntry(entry);
+                this._compactEntryAndData(entry);
             }
             this._fd.entries.fsync();
             this._data.delete(key);

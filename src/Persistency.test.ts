@@ -1,10 +1,8 @@
 import * as Fs from "fs/promises";
-import * as Os from "os";
-import * as Path from "path";
 
 import test, { After, asyncMonad } from "arrange-act-assert";
 
-import { assertDeepEqual, assertEqual } from "./testUtils";
+import { assertDeepEqual, assertEqual, tempFolder } from "./testUtils";
 import { Persistency, PersistencyContext, PersistencyOptions } from "./Persistency";
 import * as constants from "./constants";
 import { shake128 } from "./utils";
@@ -40,6 +38,7 @@ test.describe("Persistency", test => {
                 entryHash(entryI:number, data:Buffer) {
                     return overwriteFile(persistency.entriesFile, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.ENTRY_HASH, data);
                 },
+                // TODO: Test del resto de overwrites
                 location(entryI:number, data:Buffer) {
                     return overwriteFile(persistency.entriesFile, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.SIZE + constants.EntryOffsets_V0.LOCATION, data);
                 },
@@ -58,6 +57,10 @@ test.describe("Persistency", test => {
             }
         };
     }
+    async function readEntry(persistency:Pick<Persistency, "entriesFile">, entryI:number) {
+        const buffer = await Fs.readFile(persistency.entriesFile);
+        return buffer.subarray(getEntryOffset(entryI), getEntryOffset(entryI) + entrySize);
+    }
     async function setValueDataVersion(persistency:Pick<Persistency, "entriesFile">, entryI:number, dataVersion:number) {
         const buffer = await Fs.readFile(persistency.entriesFile);
         buffer.writeUint32BE(dataVersion, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.SIZE + constants.EntryOffsets_V0.DATA_VERSION);
@@ -72,7 +75,7 @@ test.describe("Persistency", test => {
         await Fs.writeFile(persistency.entriesFile, buffer);
     }
     async function newPersistency(after:After, options?:Partial<PersistencyOptions>|null, mock?:PersistencyContext) {
-        const folder = options?.folder || after(await Fs.mkdtemp(Path.join(Os.tmpdir(), "persistency-tests-")), folder => Fs.rm(folder, { recursive: true, force: true }));
+        const folder = options?.folder || await tempFolder(after);
         const persistency = after(new Persistency({
             folder: folder,
             reclaimTimeout: options?.reclaimTimeout
@@ -93,7 +96,7 @@ test.describe("Persistency", test => {
             data: await getFileSize(persistency.dataFile)
         };
     }
-    function newContextMock() {
+    function newpersistencyContext() {
         let now = Date.now();
         return {
             tick(ms:number) {
@@ -316,38 +319,6 @@ test.describe("Persistency", test => {
             }
         }
     });
-    test("should purge old entry after time", {
-        async ARRANGE(after) {
-            const context = newContextMock();
-            const { persistency } = await newPersistency(after, {
-                reclaimTimeout: 100
-            }, context);
-            persistency.set("aaa", value1);
-            persistency.set("aaa", value2);
-            const size = await getFileSizes(persistency);
-            return { persistency, size, context };
-        },
-        ACT({ persistency, context }) {
-            context.tick(100);
-            // If data is ready to be purged, next set will overwrite it
-            persistency.set("bbb", value1);
-        },
-        ASSERTS: {
-            async "entries file size must match"(_, { persistency, size }) {
-                assertEqual(await getFileSize(persistency.entriesFile), size.entries);
-            },
-            async "data file size must match"(_, { persistency, size }) {
-                assertEqual(await getFileSize(persistency.dataFile), size.data);
-            },
-            "should overwrite data"(_, { persistency }) {
-                // If data is overwritten, then entry was deleted
-                assertDeepEqual(persistency.get("bbb"), value1);
-            },
-            "should count the number of entries"(_, { persistency }) {
-                assertEqual(persistency.count(), 2);
-            }
-        }
-    });
     test("should not overwrite pending data to purge", {
         async ARRANGE(after) {
             const { persistency } = await newPersistency(after);
@@ -379,12 +350,14 @@ test.describe("Persistency", test => {
     });
     test("should purge pending entry after load", {
         async ARRANGE(after) {
-            const context = newContextMock();
+            const context = newpersistencyContext();
             const { persistency, folder } = await newPersistency(after, {
                 reclaimTimeout: 100
             }, context);
             persistency.set("aaa", value1);
             persistency.set("aaa", value2);
+            context.tick(100); // purge entry1, which copies entry2 over entry1 so entry2 is in purge state now
+            persistency.set("aaa", value3); // write a new entry, so both entry1 and entry2 are in purge state
             const size = await getFileSizes(persistency);
             persistency.close();
             return { folder, size, context };
@@ -394,9 +367,8 @@ test.describe("Persistency", test => {
                 folder: folder,
                 reclaimTimeout: 100
             }, context);
-            context.tick(100);
-            // If data is ready to be purged, next set will overwrite it
-            persistency.set("bbb", value1);
+            context.tick(100); // purge entry1 and entry2, which copies entry3 over entry1. Entry2 is free
+            persistency.set("bbb", value1); // set a new entry which will overwrite entry2
             return { persistency };
         },
         ASSERTS: {
@@ -417,16 +389,21 @@ test.describe("Persistency", test => {
     });
     test("should not overwrite pending data to purge after load", {
         async ARRANGE(after) {
-            const { persistency, folder } = await newPersistency(after);
+            const context = newpersistencyContext();
+            const { persistency, folder } = await newPersistency(after, {
+                reclaimTimeout: 100
+            }, context);
             persistency.set("aaa", value1);
             persistency.set("aaa", value2);
+            context.tick(100); // purge entry1, which copies entry2 over entry1 so entry2 is in purge state now
+            persistency.set("aaa", value3); // write a new entry, so both entry1 and entry2 are in purge state
             const size = await getFileSizes(persistency);
             persistency.close();
             return { folder, size };
         },
         async ACT({ folder }, after) {
             const { persistency } = await newPersistency(after, { folder });
-            persistency.set("bbb", value1);
+            persistency.set("bbb", value1); // write a new entry without purging pending entries in purge state
             return { persistency };
         },
         ASSERTS: {
@@ -437,7 +414,7 @@ test.describe("Persistency", test => {
                 assertEqual(await getFileSize(persistency.dataFile) > size.data, true);
             },
             "should have aaa value"({ persistency }) {
-                assertDeepEqual(persistency.get("aaa"), value2);
+                assertDeepEqual(persistency.get("aaa"), value3);
             },
             "should have bbb value"({ persistency }) {
                 assertDeepEqual(persistency.get("bbb"), value1);
@@ -449,7 +426,7 @@ test.describe("Persistency", test => {
     });
     test("should clean purge array when deleting a purging entry", {
         async ARRANGE(after) {
-            const context = newContextMock();
+            const context = newpersistencyContext();
             const { persistency } = await newPersistency(after, {
                 reclaimTimeout: 100
             }, context);
@@ -514,10 +491,10 @@ test.describe("Persistency", test => {
             persistency.set("test5", value2);
             persistency.set("test6", value3);
             persistency.set("test7", value4);
-            persistency.delete("test2");
-            persistency.delete("test1");
-            persistency.delete("test7");
-            persistency.delete("test4");
+            await setEntryBytes(persistency, 1, 3, Buffer.from([ 0x00, 0x01, 0xFF ])); // Invalidate test1
+            await setEntryBytes(persistency, 2, 3, Buffer.from([ 0x00, 0x01, 0xFF ])); // Invalidate test2
+            await setEntryBytes(persistency, 4, 3, Buffer.from([ 0x00, 0x01, 0xFF ])); // Invalidate test4
+            await setEntryBytes(persistency, 7, 3, Buffer.from([ 0x00, 0x01, 0xFF ])); // Invalidate test7
             persistency.close();
             return { folder };
         },
@@ -582,7 +559,7 @@ test.describe("Persistency", test => {
                 persistency.set("test3", value4);
                 persistency.close();
                 const fileSizes = await getFileSizes(persistency);
-                await setEntryBytes(persistency, 3, 3, Buffer.from([ 0x00, 0x01, 0xFF ])); // Invalidate entry3
+                await setEntryBytes(persistency, 3, 3, Buffer.from([ 0x00, 0x01, 0xFF ])); // Invalidate last entry
                 return { folder, fileSizes };
             },
             ACT({ folder }, after) {
@@ -664,11 +641,10 @@ test.describe("Persistency", test => {
             persistency.set("test1", value2);
             persistency.set("test2", value3);
             persistency.set("test3", value4);
-            persistency.delete("test1");
-            persistency.delete("test2"); // Make free space
-            // Entry is the same size, so will fill test1 entry, but data is bigger, so will be appended after test3 data
-            // This way the entry will be ordered in a different order than the data
-            persistency.set("test4", Buffer.concat([ value1, value2, value3 ])); 
+            persistency.set("test4", Buffer.concat([ value1, value2, value3 ]));
+            const entryBuffer = await readEntry(persistency, 4);
+            await setEntryBytes(persistency, 1, 0, entryBuffer); // move entry 4 to entry 1
+            await setEntryBytes(persistency, 4, 0, Buffer.from([ 0x99, 0x99, 0x99, 0x99 ])); // invalidate entry 4
             persistency.close();
             return { folder };
         },
@@ -678,18 +654,17 @@ test.describe("Persistency", test => {
         ASSERTS: {
             "should have allocated entries"({ persistency }) {
                 assertDeepEqual(persistency.getAllocatedBlocks().entries, [
-                    [0, getEntryOffset(1) + entrySize],
-                    [getEntryOffset(3), getEntryOffset(3) + entrySize]
+                    [0, getEntryOffset(3) + entrySize]
                 ]);
             },
             "should have allocated data"({ persistency }) {
                 assertDeepEqual(persistency.getAllocatedBlocks().data, [
                     [0, getDataOffset(5, 0).end], // keylength 5
-                    [getDataOffset(5, 3).start, getDataOffset(5, 4).end + value2.length + value3.length], // keylength 5
+                    [getDataOffset(5, 2).start, getDataOffset(5, 4).end + value2.length + value3.length], // keylength 5
                 ]);
             },
             "should count the number of entries"({ persistency }) {
-                assertEqual(persistency.count(), 3);
+                assertEqual(persistency.count(), 4);
             }
         }
     });
@@ -791,6 +766,37 @@ test.describe("Persistency", test => {
                     assertDeepEqual(persistency.get("test1"), value2);
                 },
                 "should count the number of entries"({ persistency }) {
+                    assertEqual(persistency.count(), 1);
+                }
+            }
+        });
+    });
+    test.describe("compact", test => {
+        test("should purge old entry after time", {
+            async ARRANGE(after) {
+                const context = newpersistencyContext();
+                const { persistency } = await newPersistency(after, {
+                    reclaimTimeout: 100
+                }, context);
+                persistency.set("aaa", value1);
+                persistency.set("aaa", value2);
+                const size = await getFileSizes(persistency);
+                return { persistency, size, context };
+            },
+            ACT({ persistency, context }) {
+                context.tick(100);
+                persistency.compact(); // This will copy entry2 over entry1 but entry2 will be tagged as purging
+                context.tick(100);
+                persistency.compact(); // This will finally remove last entry
+            },
+            ASSERTS: {
+                async "entries file size must reduce"(_, { persistency, size }) {
+                    assertEqual(await getFileSize(persistency.entriesFile) < size.entries, true);
+                },
+                async "data file size must reduce"(_, { persistency, size }) {
+                    assertEqual(await getFileSize(persistency.dataFile) < size.data, true);
+                },
+                "should count the number of entries"(_, { persistency }) {
                     assertEqual(persistency.count(), 1);
                 }
             }
