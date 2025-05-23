@@ -5,6 +5,173 @@ import { MemoryBlocks } from "./MemoryBlocks";
 
 test.describe("MemoryBlocks", test => {
     //const values = [{}, {}, {}, {}] as const;
+    test.describe("getFreeBlocks", test => {
+        test("should return blocks with free spaces", {
+            ARRANGE() {
+                const memory = new MemoryBlocks(0);
+                const allocation = memory.setAllocation();
+                const block1 = allocation.add(6, 8, null);
+                const block2 = allocation.add(8, 12, null);
+                const block3 = allocation.add(13, 14, null);
+                return { memory, block1, block2, block3 };
+            },
+            ACT({ memory }) {
+                return memory.getFreeBlocks();
+            },
+            ASSERT(blocks, { block1, block3 }) {
+                assertDeepEqual(blocks, {
+                    maxSpace: 6,
+                    blocks: [
+                        {
+                            location: 0,
+                            space: 6,
+                            block: block1
+                        },
+                        {
+                            location: 12,
+                            space: 1,
+                            block: block3
+                        }
+                    ]
+                });
+            }
+        });
+        test("should return blocks with free spaces after freeing", {
+            ARRANGE() {
+                const memory = new MemoryBlocks(0);
+                const allocation = memory.setAllocation();
+                const block1 = allocation.add(6, 8, null);
+                const block2 = allocation.add(8, 12, null);
+                const block3 = allocation.add(13, 14, null);
+                return { memory, block1, block2, block3 };
+            },
+            ACT({ memory, block1 }) {
+                memory.free(block1);
+                return memory.getFreeBlocks();
+            },
+            ASSERT(blocks, { block2, block3 }) {
+                assertDeepEqual(blocks, {
+                    maxSpace: 8,
+                    blocks: [
+                        {
+                            location: 0,
+                            space: 8,
+                            block: block2
+                        },
+                        {
+                            location: 12,
+                            space: 1,
+                            block: block3
+                        }
+                    ]
+                });
+            }
+        });
+        test("should not return first block if is equal to offset", {
+            ARRANGE() {
+                const memory = new MemoryBlocks(6);
+                const allocation = memory.setAllocation();
+                const block1 = allocation.add(6, 8, null);
+                const block2 = allocation.add(8, 12, null);
+                const block3 = allocation.add(13, 14, null);
+                return { memory, block1, block2, block3 };
+            },
+            ACT({ memory }) {
+                return memory.getFreeBlocks();
+            },
+            ASSERT(blocks, { block3 }) {
+                assertDeepEqual(blocks, {
+                    maxSpace: 1,
+                    blocks: [
+                        {
+                            location: 12,
+                            space: 1,
+                            block: block3
+                        }
+                    ]
+                });
+            }
+        });
+        test("should return max space", {
+            ARRANGE() {
+                const memory = new MemoryBlocks(4);
+                const allocation = memory.setAllocation();
+                const block1 = allocation.add(6, 8, null);
+                const block2 = allocation.add(8, 12, null);
+                const block3 = allocation.add(23, 24, null);
+                return { memory, block1, block2, block3 };
+            },
+            ACT({ memory }) {
+                return memory.getFreeBlocks();
+            },
+            ASSERT(blocks, { block1, block3 }) {
+                assertDeepEqual(blocks, {
+                    maxSpace: 11,
+                    blocks: [
+                        {
+                            location: 4,
+                            space: 2,
+                            block: block1
+                        },
+                        {
+                            location: 12,
+                            space: 11,
+                            block: block3
+                        }
+                    ]
+                });
+            }
+        });
+        test("should return first block if is bigger than offset", {
+            ARRANGE() {
+                const memory = new MemoryBlocks(5);
+                const allocation = memory.setAllocation();
+                const block1 = allocation.add(6, 8, null);
+                const block2 = allocation.add(8, 12, null);
+                const block3 = allocation.add(13, 14, null);
+                return { memory, block1, block2, block3 };
+            },
+            ACT({ memory }) {
+                return memory.getFreeBlocks();
+            },
+            ASSERT(blocks, { block1, block3 }) {
+                assertDeepEqual(blocks, {
+                    maxSpace: 1,
+                    blocks: [
+                        {
+                            location: 5,
+                            space: 1,
+                            block: block1
+                        },
+                        {
+                            location: 12,
+                            space: 1,
+                            block: block3
+                        }
+                    ]
+                });
+            }
+        });
+        test("should not return anything if no space is left", {
+            ARRANGE() {
+                const memory = new MemoryBlocks(6);
+                const allocation = memory.setAllocation();
+                const block1 = allocation.add(6, 8, null);
+                const block2 = allocation.add(8, 13, null);
+                const block3 = allocation.add(13, 14, null);
+                return { memory, block1, block2, block3 };
+            },
+            ACT({ memory }) {
+                return memory.getFreeBlocks();
+            },
+            ASSERT(blocks) {
+                assertDeepEqual(blocks, {
+                    maxSpace: 0,
+                    blocks: []
+                });
+            }
+        });
+    });
     test.describe("getAllocatedRanges", test => {
         test("should return allocated ranges", {
             ARRANGE() {
@@ -189,33 +356,98 @@ test.describe("MemoryBlocks", test => {
                 }
             }
         });
-        test("should finish with the last free value", {
+    });
+    test.describe("allocAfter", test => {
+        test("should alloc a block after another block between blocks", {
             ARRANGE() {
                 const memory = new MemoryBlocks(0);
                 const allocation = memory.setAllocation();
-                allocation.add(0, 4, null);
-                allocation.add(6, 8, null);
-                allocation.add(8, 9, null);
-                return { allocation }
+                const block1 = allocation.add(5, 10, null);
+                const block2 = allocation.add(20, 28, null);
+                const block3 = allocation.add(50, 90, null);
+                return { memory, block1, block2, block3 };
             },
-            ACT({ allocation }) {
-                return allocation.finish();
+            ACT({ memory, block2 }) {
+                return memory.allocAfter(block2, 3, {})
             },
-            ASSERT(location) {
-                assertEqual(location, 9);
+            ASSERTS: {
+                "should get the block"(block, { block2, block3 }) {
+                    assertDeepEqual(block, {
+                        start: 28,
+                        end: 31,
+                        prev: block2,
+                        next: block3,
+                        data: {}
+                    });
+                },
+                "should get ranges"(_, { memory }) {
+                    assertDeepEqual(memory.getAllocatedRanges(), [
+                        [5, 10],
+                        [20, 31],
+                        [50, 90]
+                    ]);
+                }
             }
         });
-        test("should finish with the offset when no blocks are added", {
+        test("should alloc a block after another block between blocks and merge", {
             ARRANGE() {
-                const memory = new MemoryBlocks(5);
+                const memory = new MemoryBlocks(0);
                 const allocation = memory.setAllocation();
-                return { allocation }
+                const block1 = allocation.add(5, 10, null);
+                const block2 = allocation.add(20, 28, null);
+                const block3 = allocation.add(31, 90, null);
+                return { memory, block1, block2, block3 };
             },
-            ACT({ allocation }) {
-                return allocation.finish();
+            ACT({ memory, block2 }) {
+                return memory.allocAfter(block2, 3, {})
             },
-            ASSERT(location) {
-                assertEqual(location, 5);
+            ASSERTS: {
+                "should get the block"(block, { block2, block3 }) {
+                    assertDeepEqual(block, {
+                        start: 28,
+                        end: 31,
+                        prev: block2,
+                        next: block3,
+                        data: {}
+                    });
+                },
+                "should get ranges"(_, { memory }) {
+                    assertDeepEqual(memory.getAllocatedRanges(), [
+                        [5, 10],
+                        [20, 90]
+                    ]);
+                }
+            }
+        });
+        test("should alloc a block after another block at the end", {
+            ARRANGE() {
+                const memory = new MemoryBlocks(0);
+                const allocation = memory.setAllocation();
+                const block1 = allocation.add(5, 10, null);
+                const block2 = allocation.add(20, 28, null);
+                const block3 = allocation.add(50, 90, null);
+                return { memory, block1, block2, block3 };
+            },
+            ACT({ memory, block3 }) {
+                return memory.allocAfter(block3, 3, {})
+            },
+            ASSERTS: {
+                "should get the block"(block, { block3 }) {
+                    assertDeepEqual(block, {
+                        start: 90,
+                        end: 93,
+                        prev: block3,
+                        next: null,
+                        data: {}
+                    });
+                },
+                "should get ranges"(_, { memory }) {
+                    assertDeepEqual(memory.getAllocatedRanges(), [
+                        [5, 10],
+                        [20, 28],
+                        [50, 93]
+                    ]);
+                }
             }
         });
     });
@@ -663,8 +895,8 @@ test.describe("MemoryBlocks", test => {
                 return memory.free(lastBlock);
             },
             ASSERTS: {
-                "should return the new memory size"(res) {
-                    assertDeepEqual(res, 5);
+                "should return the if memory shrinked"(res) {
+                    assertDeepEqual(res, true);
                 },
                 "block2 should point to block1"(_, { block1, block2 }) {
                     assertDeepEqual(block2, {
@@ -695,8 +927,8 @@ test.describe("MemoryBlocks", test => {
                 return memory.free(lastBlock);
             },
             ASSERTS: {
-                "should return the new memory size"(res) {
-                    assertDeepEqual(res, 6);
+                "should return if memory shrinked"(res) {
+                    assertDeepEqual(res, true);
                 },
                 "block2 should point to block1"(_, { block1, block2 }) {
                     assertDeepEqual(block2, {
@@ -730,8 +962,8 @@ test.describe("MemoryBlocks", test => {
                 return memory.free(block2);
             },
             ASSERTS: {
-                "should return null"(res) {
-                    assertDeepEqual(res, null);
+                "should return if memory shrinked"(res) {
+                    assertDeepEqual(res, false);
                 },
                 "block1 should point to block3"(_, { block1, block3 }) {
                     assertDeepEqual(block1, {
@@ -822,8 +1054,8 @@ test.describe("MemoryBlocks", test => {
                 return memory.free(block3);
             },
             ASSERTS: {
-                "should return null"(res) {
-                    assertDeepEqual(res, null);
+                "should return if memory shrinked"(res) {
+                    assertDeepEqual(res, false);
                 },
                 "block2 should point to block4"(_, { block1, block2, block4 }) {
                     assertDeepEqual(block2, {
@@ -915,8 +1147,8 @@ test.describe("MemoryBlocks", test => {
                 return memory.free(block2);
             },
             ASSERTS: {
-                "should return null"(res) {
-                    assertDeepEqual(res, null);
+                "should return if memory shrinked"(res) {
+                    assertDeepEqual(res, false);
                 },
                 "block1 should point to block3"(_, { block1, block3 }) {
                     assertDeepEqual(block1, {
@@ -961,11 +1193,11 @@ test.describe("MemoryBlocks", test => {
                 return { res1, res2 };
             },
             ASSERTS: {
-                "first free should return null"({ res1 }) {
-                    assertDeepEqual(res1, null);
+                "first free should return if memory shrinked"({ res1 }) {
+                    assertDeepEqual(res1, false);
                 },
-                "second free should return null"({ res2 }) {
-                    assertDeepEqual(res2, null);
+                "second free should return if memory shrinked"({ res2 }) {
+                    assertDeepEqual(res2, false);
                 },
                 "block3 should point to block4"(_, { block3, block4 }) {
                     assertDeepEqual(block3, {
@@ -1008,11 +1240,11 @@ test.describe("MemoryBlocks", test => {
                 return { res1, res2 };
             },
             ASSERTS: {
-                "first free should return null"({ res1 }) {
-                    assertDeepEqual(res1, null);
+                "first free should return if memory shrinked"({ res1 }) {
+                    assertDeepEqual(res1, false);
                 },
-                "second free should return null"({ res2 }) {
-                    assertDeepEqual(res2, null);
+                "second free should return if memory shrinked"({ res2 }) {
+                    assertDeepEqual(res2, false);
                 },
                 "block1 should point to block4"(_, { block1, block4 }) {
                     assertDeepEqual(block1, {
@@ -1056,11 +1288,11 @@ test.describe("MemoryBlocks", test => {
                 return { res1, res2 };
             },
             ASSERTS: {
-                "first free should return null"({ res1 }) {
-                    assertDeepEqual(res1, null);
+                "first free should return if memory shrinked"({ res1 }) {
+                    assertDeepEqual(res1, false);
                 },
-                "second free should return null"({ res2 }) {
-                    assertDeepEqual(res2, null);
+                "second free should return if memory shrinked"({ res2 }) {
+                    assertDeepEqual(res2, false);
                 },
                 "block1 should point to block4"(_, { block1, block4 }) {
                     assertDeepEqual(block1, {
@@ -1102,8 +1334,8 @@ test.describe("MemoryBlocks", test => {
                 return memory.free(block4);
             },
             ASSERTS: {
-                "free should return the new memory size"(res) {
-                    assertDeepEqual(res, 9);
+                "free should return if memory shrinked"(res) {
+                    assertDeepEqual(res, true);
                 },
                 "block3 should not point to block4"(_, { block2, block3 }) {
                     assertDeepEqual(block3, {
@@ -1139,11 +1371,11 @@ test.describe("MemoryBlocks", test => {
                 return { res1, res2 };
             },
             ASSERTS: {
-                "first free should return null"({ res1 }) {
-                    assertDeepEqual(res1, null);
+                "first free should return if memory shrinked"({ res1 }) {
+                    assertDeepEqual(res1, false);
                 },
-                "second free should return the new memory size"({ res2 }) {
-                    assertDeepEqual(res2, 7);
+                "second free should return if memory shrinked"({ res2 }) {
+                    assertDeepEqual(res2, true);
                 },
                 "block2 should not point to block1"(_, { block1, block2 }) {
                     assertDeepEqual(block2, {
@@ -1163,52 +1395,34 @@ test.describe("MemoryBlocks", test => {
             }
         });
     });
-    test.describe("resize", test => {
-        test("should not resize if resizing the same size", {
+    test.describe("getLastBlock", test => {
+        test("should not get last block if not initialized", {
             ARRANGE() {
                 const memory = new MemoryBlocks(0);
-                const allocation = memory.setAllocation();
-                const block1 = allocation.add(4, 5, null);
-                const block2 = allocation.add(5, 6, null);
-                const block3 = allocation.add(8, 9, null);
-                const block4 = allocation.add(10, 11, null);
-                return { memory, block1, block2, block3, block4 }
+                return { memory }
             },
-            ACT({ memory, block2 }) {
-                return memory.resize(block2, 1);
+            ACT({ memory }) {
+                return memory.getLastBlock();
             },
-            ASSERTS: {
-                "should return null"(res) {
-                    assertDeepEqual(res, null);
-                },
-                "block1 should point to block2"(_, { block1, block2 }) {
-                    assertDeepEqual(block1, {
-                        start: 4,
-                        end: 5,
-                        prev: null,
-                        next: block2,
-                        data: null
-                    });
-                },
-                "block2 should point to block1 and block3"(_, { block1, block2, block3 }) {
-                    assertDeepEqual(block2, {
-                        start: 5,
-                        end: 6,
-                        prev: block1,
-                        next: block3,
-                        data: null
-                    });
-                },
-                "should return the correct allocated ranges"(_, { memory }) {
-                    assertDeepEqual(memory.getAllocatedRanges(), [
-                        [4, 6],
-                        [8, 9],
-                        [10, 11]
-                    ]);
-                }
+            ASSERT(block) {
+                assertEqual(block, null);
             }
         });
-        test("should not change ranges if resizing the last block", {
+        test("should get last block after initializing only one block", {
+            ARRANGE() {
+                const memory = new MemoryBlocks(0);
+                const allocation = memory.setAllocation();
+                const block1 = allocation.add(4, 5, null);
+                return { memory, block1 }
+            },
+            ACT({ memory }) {
+                return memory.getLastBlock();
+            },
+            ASSERT(block, { block1 }) {
+                assertEqual(block, block1);
+            }
+        });
+        test("should get last block after initializing multiple blocks", {
             ARRANGE() {
                 const memory = new MemoryBlocks(0);
                 const allocation = memory.setAllocation();
@@ -1217,42 +1431,75 @@ test.describe("MemoryBlocks", test => {
                 const block3 = allocation.add(8, 9, null);
                 const block4 = allocation.add(10, 11, null);
                 return { memory, block1, block2, block3, block4 }
+            },
+            ACT({ memory }) {
+                return memory.getLastBlock();
+            },
+            ASSERT(block, { block4 }) {
+                assertEqual(block, block4);
+            }
+        });
+        test("should get last block after allocating one block", {
+            ARRANGE() {
+                const memory = new MemoryBlocks(0);
+                const block1 = memory.alloc(4, null);
+                return { memory, block1 }
+            },
+            ACT({ memory }) {
+                return memory.getLastBlock();
+            },
+            ASSERT(block, { block1 }) {
+                assertEqual(block, block1);
+            }
+        });
+        test("should get last block after allocating multiple block", {
+            ARRANGE() {
+                const memory = new MemoryBlocks(0);
+                const block1 = memory.alloc(4, null);
+                const block2 = memory.alloc(5, null);
+                return { memory, block1, block2 }
+            },
+            ACT({ memory }) {
+                return memory.getLastBlock();
+            },
+            ASSERT(block, { block2 }) {
+                assertEqual(block, block2);
+            }
+        });
+        test("should get last block after allocating a block before last block", {
+            ARRANGE() {
+                const memory = new MemoryBlocks(0);
+                const allocation = memory.setAllocation();
+                const block1 = allocation.add(4, 5, null);
+                memory.alloc(3, null);
+                return { memory, block1 }
+            },
+            ACT({ memory }) {
+                return memory.getLastBlock();
+            },
+            ASSERT(block, { block1 }) {
+                assertEqual(block, block1);
+            }
+        });
+        test("should get a new last block after freeing the current last block", {
+            ARRANGE() {
+                const memory = new MemoryBlocks(0);
+                const allocation = memory.setAllocation();
+                const block1 = allocation.add(4, 5, null);
+                const block2 = allocation.add(5, 6, null);
+                const block3 = allocation.add(8, 9, null);
+                const block4 = allocation.add(10, 11, null);
+                return { memory, block1, block2, block3, block4 };
             },
             ACT({ memory, block4 }) {
-                return memory.resize(block4, 2);
+                memory.free(block4);
+                return memory.getLastBlock();
             },
-            ASSERTS: {
-                "should return the new end"(res) {
-                    assertDeepEqual(res, 12);
-                },
-                "block3 should point to block2 and block4"(_, { block2, block3, block4 }) {
-                    assertDeepEqual(block3, {
-                        start: 8,
-                        end: 9,
-                        prev: block2,
-                        next: block4,
-                        data: null
-                    });
-                },
-                "block4 should point to block3"(_, { block3, block4 }) {
-                    assertDeepEqual(block4, {
-                        start: 10,
-                        end: 12,
-                        prev: block3,
-                        next: null,
-                        data: null
-                    });
-                },
-                "should return the correct allocated ranges"(_, { memory }) {
-                    assertDeepEqual(memory.getAllocatedRanges(), [
-                        [4, 6],
-                        [8, 9],
-                        [10, 12]
-                    ]);
-                }
+            ASSERT(block, { block3 }) {
+                assertEqual(block, block3);
             }
         });
-        test("should error if new size doesn't fit", {
+        test("should get the last block after freeing a block before the last block", {
             ARRANGE() {
                 const memory = new MemoryBlocks(0);
                 const allocation = memory.setAllocation();
@@ -1260,103 +1507,14 @@ test.describe("MemoryBlocks", test => {
                 const block2 = allocation.add(5, 6, null);
                 const block3 = allocation.add(8, 9, null);
                 const block4 = allocation.add(10, 11, null);
-                return { memory, block1, block2, block3, block4 }
+                return { memory, block1, block2, block3, block4 };
             },
-            ACT({ memory, block2 }) {
-                return monad(() =>memory.resize(block2, 4));
+            ACT({ memory, block3 }) {
+                memory.free(block3);
+                return memory.getLastBlock();
             },
-            ASSERT(res) {
-                res.should.error({
-                    message: /Can't resize a block bigger than free space/
-                });
-            }
-        });
-        test("should split range", {
-            ARRANGE() {
-                const memory = new MemoryBlocks(0);
-                const allocation = memory.setAllocation();
-                const block1 = allocation.add(4, 6, null);
-                const block2 = allocation.add(6, 7, null);
-                const block3 = allocation.add(8, 9, null);
-                const block4 = allocation.add(10, 11, null);
-                return { memory, block1, block2, block3, block4 }
-            },
-            ACT({ memory, block1 }) {
-                return memory.resize(block1, 1);
-            },
-            ASSERTS: {
-                "should return null"(res) {
-                    assertDeepEqual(res, null);
-                },
-                "block1 should point to block2"(_, { block1, block2 }) {
-                    assertDeepEqual(block1, {
-                        start: 4,
-                        end: 5,
-                        prev: null,
-                        next: block2,
-                        data: null
-                    });
-                },
-                "block2 should point to block1 and block3"(_, { block1, block2, block3 }) {
-                    assertDeepEqual(block2, {
-                        start: 6,
-                        end: 7,
-                        prev: block1,
-                        next: block3,
-                        data: null
-                    });
-                },
-                "should return the correct allocated ranges"(_, { memory }) {
-                    assertDeepEqual(memory.getAllocatedRanges(), [
-                        [4, 5],
-                        [6, 7],
-                        [8, 9],
-                        [10, 11]
-                    ]);
-                }
-            }
-        });
-        test("should merge range", {
-            ARRANGE() {
-                const memory = new MemoryBlocks(0);
-                const allocation = memory.setAllocation();
-                const block1 = allocation.add(4, 6, null);
-                const block2 = allocation.add(6, 7, null);
-                const block3 = allocation.add(8, 9, null);
-                const block4 = allocation.add(10, 11, null);
-                return { memory, block1, block2, block3, block4 }
-            },
-            ACT({ memory, block2 }) {
-                return memory.resize(block2, 2);
-            },
-            ASSERTS: {
-                "should return null"(res) {
-                    assertDeepEqual(res, null);
-                },
-                "block1 should point to block2"(_, { block1, block2 }) {
-                    assertDeepEqual(block1, {
-                        start: 4,
-                        end: 6,
-                        prev: null,
-                        next: block2,
-                        data: null
-                    });
-                },
-                "block2 should point to block1 and block3"(_, { block1, block2, block3 }) {
-                    assertDeepEqual(block2, {
-                        start: 6,
-                        end: 8,
-                        prev: block1,
-                        next: block3,
-                        data: null
-                    });
-                },
-                "should return the correct allocated ranges"(_, { memory }) {
-                    assertDeepEqual(memory.getAllocatedRanges(), [
-                        [4, 9],
-                        [10, 11]
-                    ]);
-                }
+            ASSERT(block, { block4 }) {
+                assertEqual(block, block4);
             }
         });
     });

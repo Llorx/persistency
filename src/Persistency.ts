@@ -49,9 +49,11 @@ export class Persistency {
     private _purgeEntries:{key:string; entry:Entry; ts:number}[] = [];
     private _entriesMemory = new MemoryBlocks<Entry>(MAGIC.length);
     private _dataMemory = new MemoryBlocks<Entry>(MAGIC.length);
-    private _lastEntryBlock:Block<Entry>|null = null;
-    private _lastDataBlock:Block<Entry>|null = null;
     private _context;
+    private _fileSizes = {
+        entries: Infinity,
+        data: Infinity
+    };
     constructor(options:PersistencyOptions, context?:PersistencyContext) {
         if (!options.folder) {
             throw new Error("Invalid folder");
@@ -65,6 +67,10 @@ export class Persistency {
         this.dataFile = Path.join(options.folder, "data.db");
         this.reclaimTimeout = options.reclaimTimeout ?? 10000;
         this._fd = this._loadDataSync();
+        if (this._checkPurge()) {
+            this._compact();
+        }
+        this._checkTruncate();
     }
     private _loadDataSync() {
         const fd = openFiles({
@@ -181,9 +187,7 @@ export class Persistency {
                 entries.push(loadingEntries[loadingEntries.length - 1].entry as Required<Entry>);
                 this._data.set(key, entries as [Entry, ...Entry[]]);
             }
-            this._setAllocatedMemory(fd, allLoadingEntries);
-            // TODO: Buscar los huecos de datas y hacer compact
-            // Después buscar los huecos de entries y hacer compact
+            this._setAllocatedMemory(allLoadingEntries);
         } catch (e) {
             console.error(e);
             // TODO: log invalid persistency
@@ -198,143 +202,163 @@ export class Persistency {
             dataFile: this.dataFile
         }, this._context.fs);
     }
-    private _compactEntryAndData(entry:Entry) {
-        if (entry.dataBlock.next) {
-            const freeSize = entry.dataBlock.next.start - entry.dataBlock.start;
-            let last = this._lastDataBlock;
-            while (last && last.data !== entry) {
-                if (last.data.purging === Purging.None) {
-                    const dataSize = last.end - last.start;
-                    if (dataSize <= freeSize) {
-                        this._dataMemory.resize(entry.dataBlock, dataSize);
-                        const dataBuffer = Buffer.allocUnsafe(dataSize);
-                        this._fd.data.read(dataBuffer, last.start, true)
-                        const keySize = last.data.valueLocation - last.data.dataBlock.start;
-                        const key:string = (dataBuffer as any).utf8Slice(0, last.data.valueLocation - last.data.dataBlock.start); // small optimization non-documented methods
+    private _compact() {
+        this._compactData();
+        this._compactEntries();
+        if (this._checkPurge()) {
+            this._compact();
+        }
+    }
+    private _compactData() {
+        let lastDataBlock = this._dataMemory.getLastBlock();
+        if (lastDataBlock) {
+            let { maxSpace, blocks } = this._dataMemory.getFreeBlocks();
+            if (blocks.length > 0) {
+                let minLocation = blocks[0].location;
+                do {
+                    if (!lastDataBlock.data.purging) {
+                        const dataSize = lastDataBlock.end - lastDataBlock.start;
+                        if (dataSize <= maxSpace) {
+                            for (let i = 0; i < blocks.length; i++) {
+                                const { location, space, block } = blocks[i];
+                                if (lastDataBlock.start < location) {
+                                    blocks.splice(i);
+                                    break;
+                                }
+                                if (dataSize <= space) {
+                                    const dataBuffer = Buffer.allocUnsafe(dataSize);
+                                    this._fd.data.read(dataBuffer, lastDataBlock.start, true);
+                                    const keySize = lastDataBlock.data.valueLocation - lastDataBlock.data.dataBlock.start;
+                                    const key:string = (dataBuffer as any).utf8Slice(0, lastDataBlock.data.valueLocation - lastDataBlock.data.dataBlock.start); // small optimization non-documented methods
+                                    const entries = this._data.get(key)!;
+    
+                                    const lastEntry = entries[entries.length - 1];
+                                    const partialEntry = this._getFreeEntryLocation({
+                                        block: null,
+                                        dataBlock: null,
+                                        valueLocation: 0,
+                                        dataVersion: (lastEntry.dataVersion + 1) & Values.UINT_32 >>> 0,
+                                        purging: Purging.None
+                                    });
+                                    const newEntry = this._getFreeDataAfterBlock(block.prev, dataSize, partialEntry);
+                                    entries.push(newEntry);
+    
+                                    const entryHeaderBuffer = Buffer.allocUnsafe(EntryHeaderOffsets_V0.SIZE);
+                                    const entryBuffer = Buffer.allocUnsafe(EntryOffsets_V0.SIZE);
+                                    entryHeaderBuffer[EntryHeaderOffsets_V0.ENTRY_VERSION] = 0;
+    
+                                    const dataLocationByte7 = (newEntry.dataBlock.start / Values.UINT_48_ROLLOVER) | 0;
+                                    entryBuffer.writeUIntBE(newEntry.dataBlock.start - (dataLocationByte7 * Values.UINT_48_ROLLOVER), EntryOffsets_V0.LOCATION, Bytes.UINT_48);
+                                    entryBuffer[EntryOffsets_V0.LOCATION + 6] = dataLocationByte7;
+    
+                                    const dataHash = shake128(dataBuffer);
+                                    dataHash.copy(entryBuffer, EntryOffsets_V0.DATA_HASH);
+                                    entryBuffer.writeUInt32BE(newEntry.dataVersion, EntryOffsets_V0.DATA_VERSION);
+                                    entryBuffer.writeUInt32BE(keySize, EntryOffsets_V0.KEY_SIZE);
+                                    entryBuffer.writeUInt32BE(dataSize - keySize, EntryOffsets_V0.VALUE_SIZE);
+                                    const entryHash = shake128(entryBuffer);
+                                    entryHash.copy(entryHeaderBuffer, EntryHeaderOffsets_V0.ENTRY_HASH);
+    
+                                    this._fd.data.write(dataBuffer, newEntry.dataBlock.start);
+                                    this._fd.data.fsync();
+    
+                                    this._fd.entries.write(entryHeaderBuffer, newEntry.block.start);
+                                    this._fd.entries.write(entryBuffer, newEntry.block.start + entryHeaderBuffer.length);
+                                    this._fd.entries.fsync();
+                                    
+                                    this._purgeEntryAndData(key, lastEntry);
+                                    if (dataSize < space) {
+                                        blocks[i].space = space - dataSize;
+                                    } else {
+                                        blocks.splice(i, 1);
+                                    }
+                                    if (maxSpace === space) {
+                                        let maxSpace = 0;
+                                        for (let i = 0; i < blocks.length; i++) {
+                                            if (blocks[i].space > maxSpace) {
+                                                maxSpace = blocks[i].space;
+                                            }
+                                        }
+                                    }
+                                    if (blocks.length > 0) {
+                                        minLocation = blocks[0].location;
+                                    }
+                                    break;
+                                }
+                            }
+                            if (blocks.length === 0) {
+                                break;
+                            }
+                        }
+                    }
+                    lastDataBlock = lastDataBlock.prev;
+                } while (lastDataBlock && lastDataBlock.start > minLocation);
+            }
+        }
+    }
+    private _compactEntries() {
+        let lastEntryBlock = this._entriesMemory.getLastBlock();
+        if (lastEntryBlock) {
+            const { blocks } = this._entriesMemory.getFreeBlocks();
+            if (blocks.length > 0) {
+                do {
+                    if (!lastEntryBlock.data.purging) {
+                        const { location, block } = blocks.shift()!;
+                        if (lastEntryBlock.start < location) {
+                            break;
+                        }
+                        const entryBuffer = Buffer.allocUnsafe(lastEntryBlock.end - lastEntryBlock.start);
+                        this._fd.entries.read(entryBuffer, lastEntryBlock.start, true);
+                        const keySize = lastEntryBlock.data.valueLocation - lastEntryBlock.data.dataBlock.start;
+                        const keyBuffer = Buffer.allocUnsafe(keySize);
+                        this._fd.data.read(keyBuffer, lastEntryBlock.data.dataBlock.start, true);
+                        const key:string = (keyBuffer as any).utf8Slice(); // small optimization non-documented methods
                         const entries = this._data.get(key)!;
 
-                        const entryHeaderBuffer = Buffer.allocUnsafe(EntryHeaderOffsets_V0.SIZE);
-                        const entryBuffer = Buffer.allocUnsafe(EntryOffsets_V0.SIZE);
-                        entryHeaderBuffer[EntryHeaderOffsets_V0.ENTRY_VERSION] = 0;
-
-                        // TODO: Duplicado en el método set()...
-                        const newEntry:Entry = {
-                            block: entry.block,
-                            dataBlock: entry.dataBlock,
-                            valueLocation: entry.dataBlock.start + keySize,
-                            dataVersion: last.data.dataVersion,
+                        const newEntry = this._getFreeEntryAfterBlock(block.prev, {
+                            block: null,
+                            dataBlock: lastEntryBlock.data.dataBlock,
+                            valueLocation: lastEntryBlock.data.valueLocation,
+                            dataVersion: lastEntryBlock.data.dataVersion,
                             purging: Purging.None
-                        };
-                        // Testear que valueLocation cambia
-                        // testear que dataVersion cambia
-                        // testear que block y dataBlock apuntan al mismo sitio
+                        }) as Entry;
 
-                        const lastEntry = entries[entries.length - 1];
-                        newEntry.dataVersion = (lastEntry.dataVersion + 1) & Values.UINT_32 >>> 0;
                         entries.push(newEntry);
-
-                        const dataLocationByte7 = (newEntry.dataBlock.start / Values.UINT_48_ROLLOVER) | 0;
-                        entryBuffer.writeUIntBE(newEntry.dataBlock.start - (dataLocationByte7 * Values.UINT_48_ROLLOVER), EntryOffsets_V0.LOCATION, Bytes.UINT_48);
-                        entryBuffer[EntryOffsets_V0.LOCATION + 6] = dataLocationByte7;
-
-                        const dataHash = shake128(dataBuffer);
-                        dataHash.copy(entryBuffer, EntryOffsets_V0.DATA_HASH);
-                        entryBuffer.writeUInt32BE(newEntry.dataVersion, EntryOffsets_V0.DATA_VERSION);
-                        entryBuffer.writeUInt32BE(keySize, EntryOffsets_V0.KEY_SIZE);
-                        entryBuffer.writeUInt32BE(dataSize - keySize, EntryOffsets_V0.VALUE_SIZE);
-                        const entryHash = shake128(entryBuffer);
-                        entryHash.copy(entryHeaderBuffer, EntryHeaderOffsets_V0.ENTRY_HASH);
-
-                        this._fd.data.write(dataBuffer, newEntry.dataBlock.start);
-                        this._fd.data.fsync();
-
-                        this._fd.entries.write(entryHeaderBuffer, newEntry.block.start);
-                        this._fd.entries.write(entryBuffer, newEntry.block.start + entryHeaderBuffer.length);
+                        this._fd.entries.write(entryBuffer, newEntry.block.start);
                         this._fd.entries.fsync();
-
-                        // TODO: Testear qué ocurre si peta entre estos writes
-                        // Si se hace delete entry antes de estos writes, tendríamos un problema
-                        // por eso deleteentry va después, pero habría que hacer un test por si acaso
-
-                        if (this.reclaimTimeout <= 0) {
-                            entries.pop();
-                            this._compactEntryAndData(lastEntry);
-                            this._fd.entries.fsync();
-                        } else {
-                            this._purgeEntryAndData(key, lastEntry);
-                        }
-                        return;
+                        this._purgeEntry(key, lastEntryBlock.data);
                     }
-                }
-                last = last.prev;
+                    lastEntryBlock = lastEntryBlock.prev;
+                } while (lastEntryBlock && blocks.length > 0 && lastEntryBlock.start > blocks[0].location);
             }
         }
-        this._compactEntry(entry);
-        this._freeData(entry);
     }
-    private _compactEntry(entry:Entry) {
-        if (entry.dataBlock.next) {
-            let last = this._lastDataBlock;
-            while (last && last.data !== entry) {
-                if (last.data.purging === Purging.None) {
-                    const entryBuffer = Buffer.allocUnsafe(last.end - last.start);
-                    this._fd.entries.read(entryBuffer, last.start, true);
-                    const keySize = last.data.valueLocation - last.data.dataBlock.start;
-                    const keyBuffer = Buffer.allocUnsafe(keySize);
-                    this._fd.data.read(keyBuffer, last.start, true)
-                    const key:string = (keyBuffer as any).utf8Slice(); // small optimization non-documented methods
-                    const entries = this._data.get(key)!;
-                    const newEntry:Entry = {
-                        block: entry.block,
-                        dataBlock: last.data.dataBlock,
-                        valueLocation: last.data.valueLocation,
-                        dataVersion: last.data.dataVersion,
-                        purging: Purging.None
-                    };
-                    entries.push(newEntry);
-                    this._fd.entries.write(entryBuffer, newEntry.block.start);
-                    this._fd.entries.fsync();
-                    if (this.reclaimTimeout <= 0) {
-                        entries.shift();
-                        this._compactEntry(last.data);
-                        this._fd.entries.fsync();
-                    } else {
-                        this._purgeEntry(key, last.data);
-                    }
-                    return;
-                }
-                last = last.prev;
-            }
-        }
+    private _deleteEntryAndData(entry:Entry) {
+        const memoryShrinked = this._deleteEntry(entry);
+        return this._dataMemory.free(entry.dataBlock) || memoryShrinked;
+    }
+    private _deleteEntry(entry:Entry) {
         this._fd.entries.write(EMPTY_ENTRY, entry.block.start);
-        this._freeEntry(entry);
+        return this._entriesMemory.free(entry.block);
     }
-    private _setAllocatedMemory(fd:typeof this._fd, entries:LoadingEntry[]) {
-        this._setAllocatedEntries(fd, entries);
-        this._setFreeMemoryData(fd, entries);
+    private _setAllocatedMemory(entries:LoadingEntry[]) {
+        this._setAllocatedEntries(entries);
+        this._setFreeMemoryData(entries);
     }
-    private _setAllocatedEntries(fd:typeof this._fd, entries:LoadingEntry[]) {
+    private _setAllocatedEntries(entries:LoadingEntry[]) {
         entries.sort((a, b) => a.location - b.location);
         const entrySize = EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.SIZE;
         const entryAllocation = this._entriesMemory.setAllocation();
         for (const loadingEntry of entries) {
             loadingEntry.entry.block = entryAllocation.add(loadingEntry.location, loadingEntry.location + entrySize, loadingEntry.entry as Required<Entry>);
         }
-        if (entries.length > 0) {
-            this._lastEntryBlock = entries[entries.length - 1].entry.block;
-        }
-        fd.entries.truncate(entryAllocation.finish());
     }
-    private _setFreeMemoryData(fd:typeof this._fd, entries:LoadingEntry[]) {
+    private _setFreeMemoryData(entries:LoadingEntry[]) {
         entries.sort((a, b) => a.dataLocation - b.dataLocation);
         const dataAllocation = this._dataMemory.setAllocation();
         for (const loadingEntry of entries) {
             loadingEntry.entry.dataBlock = dataAllocation.add(loadingEntry.dataLocation, loadingEntry.entry.valueLocation + loadingEntry.valueSize, loadingEntry.entry as Required<Entry>);
         }
-        if (entries.length > 0) {
-            this._lastDataBlock = entries[entries.length - 1].entry.dataBlock;
-        }
-        fd.data.truncate(dataAllocation.finish());
     }
     private _getFreeEntryLocation(entry:PartialEntry) {
         entry.block = this._entriesMemory.alloc(EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.SIZE, entry as Required<Entry>);
@@ -344,27 +368,21 @@ export class Persistency {
         entry.dataBlock = this._dataMemory.alloc(size, entry as Required<Entry>);
         return entry as Entry;
     }
-    private _freeEntry(entry:Entry) {
-        if (this._lastEntryBlock === entry.block) {
-            this._lastEntryBlock = entry.block.prev;
+    private _getFreeEntryAfterBlock(block:Block<Entry>|null, entry:PartialEntry) {
+        if (block != null) {
+            entry.block = this._entriesMemory.allocAfter(block, EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.SIZE, entry as Required<Entry>);
+        } else {
+            entry.block = this._entriesMemory.alloc(EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.SIZE, entry as Required<Entry>);
         }
-        const endFile = this._entriesMemory.free(entry.block);
-        if (endFile != null) {
-            this._fd.entries.truncate(endFile);
-        } else if (this._lastEntryBlock) {
-            // Buscar la última entrada y meterla en este hueco
-        }
+        return entry as PartialDataEntry;
     }
-    private _freeData(entry:Entry) {
-        if (this._lastDataBlock === entry.block) {
-            this._lastDataBlock = entry.block.prev;
+    private _getFreeDataAfterBlock(block:Block<Entry>|null, size:number, entry:PartialDataEntry) {
+        if (block != null) {
+            entry.dataBlock = this._dataMemory.allocAfter(block, size, entry as Required<Entry>);
+        } else {
+            entry.dataBlock = this._dataMemory.alloc(size, entry as Required<Entry>);
         }
-        const endFile = this._dataMemory.free(entry.dataBlock);
-        if (endFile != null) {
-            this._fd.data.truncate(endFile); // No need to fsync after this
-        } else if (this._lastDataBlock) {
-            // Buscar la última entrada y meterla en este hueco
-        }
+        return entry as Entry;
     }
     private _purgeEntryAndData(key:string, entry:Entry) {
         entry.purging = Purging.EntryAndData;
@@ -382,7 +400,28 @@ export class Persistency {
             ts: this._context.now() + this.reclaimTimeout
         });
     }
+    private _checkTruncate() {
+        this._checkTruncateEntries();
+        this._checkTruncateData();
+    }
+    private _checkTruncateEntries() {
+        const lastEntryBlock = this._entriesMemory.getLastBlock();
+        const end = lastEntryBlock ? lastEntryBlock.end : this._entriesMemory.offset;
+        if (this._fileSizes.entries > end) {
+            this._fd.entries.truncate(end);
+        }
+        this._fileSizes.entries = end;
+    }
+    private _checkTruncateData() {
+        const lastDataBlock = this._dataMemory.getLastBlock();
+        const end = lastDataBlock ? lastDataBlock.end : this._dataMemory.offset;
+        if (this._fileSizes.data > end) {
+            this._fd.data.truncate(end);
+        }
+        this._fileSizes.data = end;
+    }
     private _checkPurge() {
+        let needsCompact = false;
         if (this._purgeEntries.length > 0) {
             const now = this._context.now();
             let i = 0;
@@ -390,9 +429,9 @@ export class Persistency {
                 const data = this._purgeEntries[i];
                 if (data.ts <= now) {
                     if (data.entry.purging === Purging.EntryAndData) {
-                        this._compactEntryAndData(data.entry); // Delete instead of just freeing to avoid data never being overwritten and TS being the highest again
+                        needsCompact = !this._deleteEntryAndData(data.entry) || needsCompact;
                     } else {
-                        this._compactEntry(data.entry);
+                        needsCompact = !this._deleteEntry(data.entry) || needsCompact;
                     }
                     const entries = this._data.get(data.key)!;
                     entries.splice(entries.indexOf(data.entry), 1);
@@ -405,6 +444,7 @@ export class Persistency {
                 this._purgeEntries.splice(0, i);
             }
         }
+        return needsCompact;
     }
     private _getEntryValue(entry:Entry) {
         const valueBuffer = Buffer.allocUnsafe(entry.dataBlock.end - entry.valueLocation);
@@ -412,7 +452,10 @@ export class Persistency {
         return valueBuffer;
     }
     compact() {
-        this._checkPurge();
+        if (this._checkPurge()) {
+            this._compact();
+        }
+        this._checkTruncate();
     }
     count() {
         return this._data.size;
@@ -424,7 +467,7 @@ export class Persistency {
         return null;
     }
     set(key:string, value:Buffer) {
-        this._checkPurge();
+        let needsCompact = this._checkPurge();
         const entries = this._data.get(key);
         const keyBuffer = Buffer.from(key);
         const dataHash = shake128(keyBuffer, value);
@@ -437,14 +480,8 @@ export class Persistency {
         });
         const entry = this._getFreeDataLocation(keyBuffer.length + value.length, partialEntry);
         entry.valueLocation = entry.dataBlock.start + keyBuffer.length;
-        if (!entry.block.next) {
-            this._lastEntryBlock = entry.block;
-        }
-        if (!entry.dataBlock.next) {
-            this._lastDataBlock = entry.dataBlock;
-        }
         
-        // TODO: Duplicado en el método _compact()...
+        // TODO: Duplicado...
         let lastEntry;
         if (entries) {
             lastEntry = entries[entries.length - 1];
@@ -477,19 +514,18 @@ export class Persistency {
         this._fd.entries.write(entryBuffer, entry.block.start + entryHeaderBuffer.length);
         this._fd.entries.fsync();
 
-        // TODO: Testear qué ocurre si peta entre estos writes
-        // Si se hace delete entry antes de estos writes, tendríamos un problema
-        // por eso deleteentry va después, pero habría que hacer un test por si acaso
-
         if (entries && this.reclaimTimeout <= 0) {
             // Delete after data write
             for (const entry of entries.splice(0, entries.length - 1)) {
-                this._compactEntryAndData(entry);
+                needsCompact = !this._deleteEntryAndData(entry) || needsCompact;
             }
-            this._fd.entries.fsync(); // Another fsync to ensure that previous entry was fully written
         } else if (lastEntry) {
             this._purgeEntryAndData(key, lastEntry);
         }
+        if (needsCompact) {
+            this._compact();
+        }
+        this._checkTruncate();
     }
     get(key:string) {
         const entries = this._data.get(key);
@@ -504,11 +540,12 @@ export class Persistency {
         const entries = this._data.get(key);
         if (entries) {
             let isPurging = false;
+            let needsCompact = false;
             for (const entry of entries) {
                 if (entry.purging !== Purging.None) {
                     isPurging = true;
                 }
-                this._compactEntryAndData(entry);
+                needsCompact = !this._deleteEntryAndData(entry) || needsCompact;
             }
             this._fd.entries.fsync();
             this._data.delete(key);
@@ -519,6 +556,10 @@ export class Persistency {
                     }
                 }
             }
+            if (needsCompact) {
+                this._compact();
+            }
+            this._checkTruncate();
             return true;
         } else {
             return false;
@@ -535,7 +576,7 @@ export class Persistency {
             return;
         }
         this._closed = true;
-        this._checkPurge();
+        this.compact();
         if (this._fd) {
             this._fd.entries.fsync();
             this._fd.data.fsync();
