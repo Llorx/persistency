@@ -1,4 +1,4 @@
-import test, { monad } from "arrange-act-assert";
+import test from "arrange-act-assert";
 
 import { assertDeepEqual, assertEqual } from "./testUtils";
 import { MemoryBlocks } from "./MemoryBlocks";

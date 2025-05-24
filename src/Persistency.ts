@@ -67,9 +67,8 @@ export class Persistency {
         this.dataFile = Path.join(options.folder, "data.db");
         this.reclaimTimeout = options.reclaimTimeout ?? 10000;
         this._fd = this._loadDataSync();
-        if (this._checkPurge()) {
-            this._compact();
-        }
+        this._checkPurge();
+        this._compact();
         this._checkTruncate();
     }
     private _loadDataSync() {
@@ -241,6 +240,7 @@ export class Persistency {
                                         purging: Purging.None
                                     });
                                     const newEntry = this._getFreeDataAfterBlock(block.prev, dataSize, partialEntry);
+                                    newEntry.valueLocation = newEntry.dataBlock.start + keySize;
                                     entries.push(newEntry);
     
                                     const entryHeaderBuffer = Buffer.allocUnsafe(EntryHeaderOffsets_V0.SIZE);
@@ -471,6 +471,8 @@ export class Persistency {
         const entries = this._data.get(key);
         const keyBuffer = Buffer.from(key);
         const dataHash = shake128(keyBuffer, value);
+
+        // TODO: Duplicated in compact logic. Fix somehow...
         const partialEntry = this._getFreeEntryLocation({
             block: null,
             dataBlock: null,
@@ -480,8 +482,7 @@ export class Persistency {
         });
         const entry = this._getFreeDataLocation(keyBuffer.length + value.length, partialEntry);
         entry.valueLocation = entry.dataBlock.start + keyBuffer.length;
-        
-        // TODO: Duplicado...
+
         let lastEntry;
         if (entries) {
             lastEntry = entries[entries.length - 1];
@@ -515,7 +516,7 @@ export class Persistency {
         this._fd.entries.fsync();
 
         if (entries && this.reclaimTimeout <= 0) {
-            // Delete after data write
+            // Delete old entries after data write
             for (const entry of entries.splice(0, entries.length - 1)) {
                 needsCompact = !this._deleteEntryAndData(entry) || needsCompact;
             }

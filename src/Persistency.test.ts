@@ -479,7 +479,7 @@ test.describe("Persistency", test => {
             }
         }
     });
-    test("should load allocated blocks on file load", {
+    test("should load and compress blocks on file load", {
         async ARRANGE(after) {
             const { persistency, folder } = await newPersistency(after);
             // all keys same length for easy offset calculation purposes
@@ -495,6 +495,10 @@ test.describe("Persistency", test => {
             await setEntryBytes(persistency, 2, 3, Buffer.from([ 0x00, 0x01, 0xFF ])); // Invalidate test2
             await setEntryBytes(persistency, 4, 3, Buffer.from([ 0x00, 0x01, 0xFF ])); // Invalidate test4
             await setEntryBytes(persistency, 7, 3, Buffer.from([ 0x00, 0x01, 0xFF ])); // Invalidate test7
+            // Should copy test6 over test1
+            // Should copy test5 over test2
+            // Nothing to copy over test4
+            // Will end with test0-test3 final data, then test5 and test6 waiting to be purged
             persistency.close();
             return { folder };
         },
@@ -504,20 +508,75 @@ test.describe("Persistency", test => {
         ASSERTS: {
             "should have allocated entries in memory"({ persistency }) {
                 assertDeepEqual(persistency.getAllocatedBlocks().entries, [
-                    [0, getEntryOffset(0) + entrySize],
-                    [getEntryOffset(3), getEntryOffset(3) + entrySize],
+                    [0, getEntryOffset(3) + entrySize],
                     [getEntryOffset(5), getEntryOffset(6) + entrySize]
                 ]);
             },
             "should have allocated data in memory"({ persistency }) {
                 assertDeepEqual(persistency.getAllocatedBlocks().data, [
-                    [0, getDataOffset(5, 0).end], // keylength 5
-                    [getDataOffset(5, 3).start, getDataOffset(5, 3).end], // keylength 5
+                    [0, getDataOffset(5, 3).end], // keylength 5
                     [getDataOffset(5, 5).start, getDataOffset(5, 6).end] // keylength 5
                 ]);
             },
             "should count the number of entries"({ persistency }) {
                 assertEqual(persistency.count(), 4);
+            },
+            async "should have truncated the files"({ persistency }) {
+                assertDeepEqual(await getFileSizes(persistency), {
+                    entries: getEntryOffset(6) + entrySize,
+                    data: getDataOffset(5, 6).end
+                });
+            }
+        }
+    });
+    test("should load and compress blocks on file load without reclaimTimeout", {
+        async ARRANGE(after) {
+            const { persistency, folder } = await newPersistency(after);
+            // all keys same length for easy offset calculation purposes
+            persistency.set("test0", value1);
+            persistency.set("test1", value2);
+            persistency.set("test2", value3);
+            persistency.set("test3", value4);
+            persistency.set("test4", value1);
+            persistency.set("test5", value2);
+            persistency.set("test6", value3);
+            persistency.set("test7", value4);
+            await setEntryBytes(persistency, 1, 3, Buffer.from([ 0x00, 0x01, 0xFF ])); // Invalidate test1
+            await setEntryBytes(persistency, 2, 3, Buffer.from([ 0x00, 0x01, 0xFF ])); // Invalidate test2
+            await setEntryBytes(persistency, 4, 3, Buffer.from([ 0x00, 0x01, 0xFF ])); // Invalidate test4
+            await setEntryBytes(persistency, 7, 3, Buffer.from([ 0x00, 0x01, 0xFF ])); // Invalidate test7
+            // Should copy test6 over test1
+            // Should copy test5 over test2
+            // Nothing to copy over test4
+            // Will end with test0-test3 final data, then test5 and test6 already purged because of reclaimTimeout
+            persistency.close();
+            return { folder };
+        },
+        ACT({ folder }, after) {
+            return newPersistency(after, {
+                folder: folder,
+                reclaimTimeout: 0
+            });
+        },
+        ASSERTS: {
+            "should have allocated entries in memory"({ persistency }) {
+                assertDeepEqual(persistency.getAllocatedBlocks().entries, [
+                    [0, getEntryOffset(3) + entrySize]
+                ]);
+            },
+            "should have allocated data in memory"({ persistency }) {
+                assertDeepEqual(persistency.getAllocatedBlocks().data, [
+                    [0, getDataOffset(5, 3).end], // keylength 5
+                ]);
+            },
+            "should count the number of entries"({ persistency }) {
+                assertEqual(persistency.count(), 4);
+            },
+            async "should have truncated the files"({ persistency }) {
+                assertDeepEqual(await getFileSizes(persistency), {
+                    entries: getEntryOffset(3) + entrySize,
+                    data: getDataOffset(5, 3).end
+                });
             }
         }
     });
@@ -645,6 +704,8 @@ test.describe("Persistency", test => {
             const entryBuffer = await readEntry(persistency, 4);
             await setEntryBytes(persistency, 1, 0, entryBuffer); // move entry 4 to entry 1
             await setEntryBytes(persistency, 4, 0, Buffer.from([ 0x99, 0x99, 0x99, 0x99 ])); // invalidate entry 4
+            // test1 data is not referenced anymore, so when loading, test3 data will be moved over test1 data to compact the space
+            // When doing so, a new test3 entry will be created to be able to move the data which will overwrite test4 as test4 is invalidated
             persistency.close();
             return { folder };
         },
@@ -654,13 +715,12 @@ test.describe("Persistency", test => {
         ASSERTS: {
             "should have allocated entries"({ persistency }) {
                 assertDeepEqual(persistency.getAllocatedBlocks().entries, [
-                    [0, getEntryOffset(3) + entrySize]
+                    [0, getEntryOffset(4) + entrySize]
                 ]);
             },
             "should have allocated data"({ persistency }) {
                 assertDeepEqual(persistency.getAllocatedBlocks().data, [
-                    [0, getDataOffset(5, 0).end], // keylength 5
-                    [getDataOffset(5, 2).start, getDataOffset(5, 4).end + value2.length + value3.length], // keylength 5
+                    [0, getDataOffset(5, 4).end + value2.length + value3.length]
                 ]);
             },
             "should count the number of entries"({ persistency }) {
@@ -803,6 +863,16 @@ test.describe("Persistency", test => {
         });
         // TODO: Lo mismo de arriba pero sin reclaimTimeout
     });
+
+
+    // Testear que en la carga compacta
+    // Testear que en la carga trunca
+    // Testear que en la carga purga entradas antiguas
+    // Testear que en la carga purga entradas antiguas con reclaimTimeout sea 0
+    // Testear que en la carga purga únicamente entradas de entradas duplicadas (entradas con mismo TS, que no borra los datos)
+
+    // 
+
     // TODO:
     // Y ya testear todas las posibilidades al cargar (incluyendo que trunca)
     // Testear cuando se escriben datos parciales de absolutamente todos los bytes posibles (entrada y datos)
