@@ -2,7 +2,7 @@ import * as Fs from "fs/promises";
 
 import test, { After, asyncMonad } from "arrange-act-assert";
 
-import { assertDeepEqual, assertEqual, tempFolder } from "./testUtils";
+import { assertDeepEqual, assertEqual, newOpenFilesContext, tempFolder } from "./testUtils";
 import { Persistency, PersistencyContext, PersistencyOptions } from "./Persistency";
 import * as constants from "./constants";
 import { shake128 } from "./utils";
@@ -38,21 +38,8 @@ test.describe("Persistency", test => {
                 entryHash(entryI:number, data:Buffer) {
                     return overwriteFile(persistency.entriesFile, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.ENTRY_HASH, data);
                 },
-                // TODO: Test del resto de overwrites
-                location(entryI:number, data:Buffer) {
-                    return overwriteFile(persistency.entriesFile, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.SIZE + constants.EntryOffsets_V0.LOCATION, data);
-                },
                 dataHash(entryI:number, data:Buffer) {
                     return overwriteFile(persistency.entriesFile, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.SIZE + constants.EntryOffsets_V0.DATA_HASH, data);
-                },
-                dataVersion(entryI:number, data:Buffer) {
-                    return overwriteFile(persistency.entriesFile, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.SIZE + constants.EntryOffsets_V0.DATA_VERSION, data);
-                },
-                keySize(entryI:number, data:Buffer) {
-                    return overwriteFile(persistency.entriesFile, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.SIZE + constants.EntryOffsets_V0.KEY_SIZE, data);
-                },
-                valueSize(entryI:number, data:Buffer) {
-                    return overwriteFile(persistency.entriesFile, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.SIZE + constants.EntryOffsets_V0.VALUE_SIZE, data);
                 }
             }
         };
@@ -98,15 +85,42 @@ test.describe("Persistency", test => {
     }
     function newpersistencyContext() {
         let now = Date.now();
+        const timeouts:{cb:()=>void, ts:number}[] = [];
+        const checkTimeouts = () => {
+            for (let i = 0; i < timeouts.length; i++) {
+                if (timeouts[i].ts <= now) {
+                    timeouts[i].cb();
+                    timeouts.splice(i--, 1);
+                }
+            }
+        };
         return {
             tick(ms:number) {
                 now += ms;
+                checkTimeouts();
             },
             set(ms:number) {
                 now = ms;
+                checkTimeouts();
             },
             now() {
                 return now;
+            },
+            setTimeout(cb:()=>void, ms:number) {
+                const timer = {
+                    cb: cb,
+                    ts: now + ms
+                };
+                timeouts.push(timer);
+                return timer as any;
+            },
+            clearTimeout(timer:any) {
+                for (let i = 0; i < timeouts.length; i++) {
+                    if (timeouts[i] === timer) {
+                        timeouts.splice(i, 1);
+                        break;
+                    }
+                }
             }
         };
     }
@@ -151,6 +165,23 @@ test.describe("Persistency", test => {
         }
     });
     test("should update data", {
+        ARRANGE(after) {
+            return newPersistency(after);
+        },
+        ACT({ persistency }) {
+            persistency.set("test", value1);
+            persistency.set("test", value2);
+        },
+        ASSERTS: {
+            "should have the data data"(_, { persistency }) {
+                assertDeepEqual(persistency.get("test"), value2);
+            },
+            "should count the number of entries"(_, { persistency }) {
+                assertEqual(persistency.count(), 1);
+            }
+        }
+    });
+    test("should load updated data from file", {
         async ARRANGE(after) {
             const { persistency, folder } = await newPersistency(after);
             persistency.set("test", value1);
@@ -166,23 +197,6 @@ test.describe("Persistency", test => {
                 assertDeepEqual(persistency.get("test"), value2);
             },
             "should count the number of entries"({ persistency }) {
-                assertEqual(persistency.count(), 1);
-            }
-        }
-    });
-    test("should update data without reloading", {
-        ARRANGE(after) {
-            return newPersistency(after);
-        },
-        ACT({ persistency }) {
-            persistency.set("test", value1);
-            persistency.set("test", value2);
-        },
-        ASSERTS: {
-            "should have the data data"(_, { persistency }) {
-                assertDeepEqual(persistency.get("test"), value2);
-            },
-            "should count the number of entries"(_, { persistency }) {
                 assertEqual(persistency.count(), 1);
             }
         }
@@ -203,6 +217,38 @@ test.describe("Persistency", test => {
             },
             "should have second data"(_, { persistency }) {
                 assertDeepEqual(persistency.get("test2"), value2);
+            },
+            "should count the number of entries"(_, { persistency }) {
+                assertEqual(persistency.count(), 1);
+            }
+        }
+    });
+    test("should compact after deleting data", {
+        async ARRANGE(after) {
+            const { persistency } = await newPersistency(after, {
+                reclaimTimeout: 0
+            });
+            persistency.set("test0", value1);
+            const size = await getFileSizes(persistency); // get file size after one entry
+            persistency.set("test0", value2);
+            persistency.set("test1", value3);
+            return { persistency, size };
+        },
+        ACT({ persistency }) {
+            persistency.delete("test0");
+        },
+        ASSERTS: {
+            async "entries file size must match"(_, { persistency, size }) {
+                assertEqual(await getFileSize(persistency.entriesFile), size.entries);
+            },
+            async "data file size must match"(_, { persistency, size }) {
+                assertEqual(await getFileSize(persistency.dataFile), size.data);
+            },
+            "should not have first data"(_, { persistency }) {
+                assertEqual(persistency.get("test0"), null);
+            },
+            "should have second data"(_, { persistency }) {
+                assertDeepEqual(persistency.get("test1"), value3);
             },
             "should count the number of entries"(_, { persistency }) {
                 assertEqual(persistency.count(), 1);
@@ -233,7 +279,7 @@ test.describe("Persistency", test => {
             }
         }
     });
-    test("should not load deleted entry with multiple subentries from file", {
+    test("should not load deleted entry with multiple subentries on load", {
         async ARRANGE(after) {
             const { persistency, folder: folder } = await newPersistency(after);
             persistency.set("test", value1);
@@ -246,6 +292,37 @@ test.describe("Persistency", test => {
             return newPersistency(after, { folder });
         },
         ASSERTS: {
+            "should get the correct value for the entry"({ persistency }) {
+                assertEqual(persistency.get("test"), null);
+            },
+            "should count the number of entries"({ persistency }) {
+                assertEqual(persistency.count(), 0);
+            }
+        }
+    });
+    test("should compact deleted entry with multiples subentries on load", {
+        async ARRANGE(after) {
+            const { persistency, folder: folder } = await newPersistency(after);
+            const size = await getFileSizes(persistency);
+            persistency.set("test", value1);
+            persistency.set("test", value2);
+            persistency.delete("test");
+            persistency.close();
+            return { folder, size };
+        },
+        ACT({ folder }, after) {
+            return newPersistency(after, {
+                folder: folder,
+                reclaimTimeout: 0
+            });
+        },
+        ASSERTS: {
+            async "entries file size must match"({ persistency }, { size }) {
+                assertEqual(await getFileSize(persistency.entriesFile), size.entries);
+            },
+            async "data file size must match"({ persistency }, { size }) {
+                assertEqual(await getFileSize(persistency.dataFile), size.data);
+            },
             "should get the correct value for the entry"({ persistency }) {
                 assertEqual(persistency.get("test"), null);
             },
@@ -705,7 +782,7 @@ test.describe("Persistency", test => {
             await setEntryBytes(persistency, 1, 0, entryBuffer); // move entry 4 to entry 1
             await setEntryBytes(persistency, 4, 0, Buffer.from([ 0x99, 0x99, 0x99, 0x99 ])); // invalidate entry 4
             // test1 data is not referenced anymore, so when loading, test3 data will be moved over test1 data to compact the space
-            // When doing so, a new test3 entry will be created to be able to move the data which will overwrite test4 as test4 is invalidated
+            // When doing so, a new test3 entry will be created which will overwrite test4 as test4 is not valid
             persistency.close();
             return { folder };
         },
@@ -830,9 +907,57 @@ test.describe("Persistency", test => {
                 }
             }
         });
+        test("should invalidate entry if data hash is invalid", {
+            async ARRANGE(after) {
+                const { persistency, folder } = await newPersistency(after);
+                persistency.set("test0", value1);
+                persistency.set("test1", value2);
+                persistency.close();
+                await overwrite(persistency).entry.dataHash(0, Buffer.from([ 0x00, 0x01 ]));
+                return { folder };
+            },
+            ACT({ folder }, after) {
+                return newPersistency(after, { folder });
+            },
+            ASSERTS: {
+                "should not have entry 0"({ persistency }) {
+                    assertDeepEqual(persistency.get("test0"), null);
+                },
+                "should have entry 1"({ persistency }) {
+                    assertDeepEqual(persistency.get("test1"), value2);
+                },
+                "should count the number of entries"({ persistency }) {
+                    assertEqual(persistency.count(), 1);
+                }
+            }
+        });
     });
     test.describe("compact", test => {
         test("should purge old entry after time", {
+            async ARRANGE(after) {
+                const context = newpersistencyContext();
+                const { persistency } = await newPersistency(after, {
+                    reclaimTimeout: 100
+                }, context);
+                persistency.set("aaa", value1);
+                persistency.set("aaa", value2);
+                const size = await getFileSizes(persistency);
+                return { persistency, size, context };
+            },
+            ACT({ persistency, context }) {
+                context.tick(100);
+                persistency.compact(); // This will copy entry2 over entry1 but entry2 will be tagged as purging
+            },
+            ASSERTS: {
+                async "file sizes must be the same"(_, { persistency, size }) {
+                    assertDeepEqual(await getFileSizes(persistency), size);
+                },
+                "should count the number of entries"(_, { persistency }) {
+                    assertEqual(persistency.count(), 1);
+                }
+            }
+        });
+        test("should purge old and moved entries after time", {
             async ARRANGE(after) {
                 const context = newpersistencyContext();
                 const { persistency } = await newPersistency(after, {
@@ -861,20 +986,169 @@ test.describe("Persistency", test => {
                 }
             }
         });
-        // TODO: Lo mismo de arriba pero sin reclaimTimeout
+        test("should purge old entry instantly with reclaimTimeout: 0", {
+            async ARRANGE(after) {
+                const { persistency } = await newPersistency(after, {
+                    reclaimTimeout: 0
+                });
+                persistency.set("aaa", value1);
+                const size = await getFileSizes(persistency);
+                return { persistency, size };
+            },
+            ACT({ persistency }) {
+                persistency.set("aaa", value2);
+            },
+            ASSERTS: {
+                async "file sizes must be the same"(_, { persistency, size }) {
+                    assertDeepEqual(await getFileSizes(persistency), size);
+                },
+                "should count the number of entries"(_, { persistency }) {
+                    assertEqual(persistency.count(), 1);
+                }
+            }
+        });
+        test("should have a copy if not compacting", {
+            async ARRANGE(after) {
+                const context = {
+                    ...newpersistencyContext(),
+                    fs: newOpenFilesContext()
+                };
+                const { persistency } = await newPersistency(after, {
+                    reclaimTimeout: 0
+                }, context);
+                persistency.set("aaa", value1);
+                const size = await getFileSizes(persistency);
+                // Block compacting
+                // Allow 4 original writes and then block the remaining
+                context.fs.writeSync.pushNextAllow(4);
+                for (let i = 0; i < 10; i++) {
+                    context.fs.ftruncateSync.pushNextReturn();
+                    context.fs.writeSync.pushNextReturn();
+                }
+                return { persistency, context, size };
+            },
+            ACT({ persistency }) {
+                persistency.set("aaa", value2);
+            },
+            ASSERTS: {
+                async "entries file size must be bigger"(_, { persistency, size }) {
+                    assertEqual(await getFileSize(persistency.entriesFile) > size.entries, true);
+                },
+                async "data file size must be bigger"(_, { persistency, size }) {
+                    assertEqual(await getFileSize(persistency.dataFile) > size.data, true);
+                },
+                "should count the number of entries"(_, { persistency }) {
+                    assertEqual(persistency.count(), 1);
+                }
+            }
+        });
+        test("should compact when loading", {
+            async ARRANGE(after) {
+                const context = {
+                    ...newpersistencyContext(),
+                    fs: newOpenFilesContext()
+                };
+                const { persistency, folder } = await newPersistency(after, {
+                    reclaimTimeout: 0
+                }, context);
+                persistency.set("aaa", value1);
+                const size = await getFileSizes(persistency);
+                // Block compacting
+                // Allow 4 original writes and then block the remaining
+                context.fs.writeSync.pushNextAllow(4);
+                for (let i = 0; i < 10; i++) {
+                    context.fs.ftruncateSync.pushNextReturn();
+                    context.fs.writeSync.pushNextReturn();
+                }
+                persistency.set("aaa", value2);
+                persistency.close();
+                return { folder, context, size };
+            },
+            ACT({ folder }, after) {
+                return newPersistency(after, {
+                    folder: folder,
+                    reclaimTimeout: 0
+                });
+            },
+            ASSERTS: {
+                async "file sizes must be the same"({ persistency }, { size }) {
+                    assertDeepEqual(await getFileSizes(persistency), size);
+                },
+                "should count the number of entries"({ persistency }) {
+                    assertEqual(persistency.count(), 1);
+                },
+                "should have the data"({ persistency }) {
+                    assertDeepEqual(persistency.get("aaa"), value2);
+                }
+            }
+        });
+        test("should load previous value if new value is damaged before compacting", {
+            async ARRANGE(after) {
+                const context = {
+                    ...newpersistencyContext(),
+                    fs: newOpenFilesContext()
+                };
+                const { persistency, folder } = await newPersistency(after, {
+                    reclaimTimeout: 0
+                }, context);
+                persistency.set("aaa", value1);
+                const size = await getFileSizes(persistency);
+                // Block compacting
+                // Allow 4 original writes and then block the remaining
+                context.fs.writeSync.pushNextAllow(4);
+                for (let i = 0; i < 10; i++) {
+                    context.fs.ftruncateSync.pushNextReturn();
+                    context.fs.writeSync.pushNextReturn();
+                }
+                persistency.set("aaa", value2);
+                persistency.close();
+                await setEntryBytes(persistency, 1, 0, Buffer.from([ 0x99, 0x99, 0x99, 0x99 ])); // invalidate entry 1
+                return { folder, context, size };
+            },
+            ACT({ folder }, after) {
+                return newPersistency(after, {
+                    folder: folder,
+                    reclaimTimeout: 0
+                });
+            },
+            ASSERTS: {
+                async "file sizes must be the same"({ persistency }, { size }) {
+                    assertDeepEqual(await getFileSizes(persistency), size);
+                },
+                "should count the number of entries"({ persistency }) {
+                    assertEqual(persistency.count(), 1);
+                },
+                "should have the data"({ persistency }) {
+                    assertDeepEqual(persistency.get("aaa"), value1);
+                }
+            }
+        });
+        test("should purge after timeout", {
+            async ARRANGE(after) {
+                const context = newpersistencyContext();
+                const { persistency } = await newPersistency(after, {
+                    reclaimTimeout: 100
+                }, context);
+                persistency.set("aaa", value1);
+                persistency.set("aaa", value2);
+                const size = await getFileSizes(persistency);
+                return { persistency, size, context };
+            },
+            ACT({ context }) {
+                context.tick(100); // This will copy entry2 over entry1 but entry2 will be tagged as purging
+                context.tick(100); // This will finally remove last entry
+            },
+            ASSERTS: {
+                async "entries file size must reduce"(_, { persistency, size }) {
+                    assertEqual(await getFileSize(persistency.entriesFile) < size.entries, true);
+                },
+                async "data file size must reduce"(_, { persistency, size }) {
+                    assertEqual(await getFileSize(persistency.dataFile) < size.data, true);
+                },
+                "should count the number of entries"(_, { persistency }) {
+                    assertEqual(persistency.count(), 1);
+                }
+            }
+        });
     });
-
-
-    // Testear que en la carga compacta
-    // Testear que en la carga trunca
-    // Testear que en la carga purga entradas antiguas
-    // Testear que en la carga purga entradas antiguas con reclaimTimeout sea 0
-    // Testear que en la carga purga únicamente entradas de entradas duplicadas (entradas con mismo TS, que no borra los datos)
-
-    // 
-
-    // TODO:
-    // Y ya testear todas las posibilidades al cargar (incluyendo que trunca)
-    // Testear cuando se escriben datos parciales de absolutamente todos los bytes posibles (entrada y datos)
-    // Testear esto además cuando se van a borrar entradas (zero bytes parciales escritos)
 });

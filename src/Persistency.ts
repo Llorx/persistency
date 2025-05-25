@@ -1,7 +1,7 @@
 import * as Fs from "fs";
 import * as Path from "path";
 
-import { openFiles, OpenFilesContext, shake128 } from "./utils";
+import { Fd, openFiles, OpenFilesContext, Reader, shake128 } from "./utils";
 import { MemoryBlocks, Block } from "./MemoryBlocks";
 import { EMPTY_ENTRY, Bytes, EntryHeaderOffsets_V0, EntryOffsets_V0, MAGIC, Values } from "./constants";
 
@@ -12,6 +12,8 @@ export type PersistencyOptions = {
 export type PersistencyContext = Partial<{
     now():number; // Inject "world access" dependency for easier testing
     fs:OpenFilesContext;
+    setTimeout(cb:()=>void, ms:number):NodeJS.Timeout;
+    clearTimeout(timer:NodeJS.Timeout):void;
 }>;
 const enum Purging {
     None,
@@ -46,7 +48,8 @@ export class Persistency {
     readonly dataFile;
     readonly reclaimTimeout;
     private _data = new Map<string, [Entry, ...Entry[]]>();
-    private _purgeEntries:{key:string; entry:Entry; ts:number}[] = [];
+    private _purgeEntries:{key:string; entry:Entry; ttl:number}[] = [];
+    private _purgeTimeout:NodeJS.Timeout|null = null;
     private _entriesMemory = new MemoryBlocks<Entry>(MAGIC.length);
     private _dataMemory = new MemoryBlocks<Entry>(MAGIC.length);
     private _context;
@@ -61,15 +64,71 @@ export class Persistency {
         this._context = {
             now: Date.now,
             fs: Fs,
+            setTimeout: setTimeout,
+            clearTimeout: clearTimeout,
             ...context
         };
         this.entriesFile = Path.join(options.folder, "entries.db");
         this.dataFile = Path.join(options.folder, "data.db");
-        this.reclaimTimeout = options.reclaimTimeout ?? 10000;
+        this.reclaimTimeout = options.reclaimTimeout != null ? options.reclaimTimeout : 10000;
         this._fd = this._loadDataSync();
         this._checkPurge();
         this._compact();
         this._checkTruncate();
+    }
+    private _readEntry(entriesReader:Reader, fdData:Fd, buffers:{ // Buffers object to avoid allocating buffers each time
+        entryHeader:Buffer;
+        entry:Buffer;
+    }) {
+        while (true) {
+            const entryLocation = entriesReader.offset;
+            try {
+                if (entriesReader.read(buffers.entryHeader, false)) {
+                    return null;
+                }
+                if (buffers.entryHeader[EntryHeaderOffsets_V0.ENTRY_VERSION] !== 0) {
+                    entriesReader.advance(buffers.entry.length);
+                    throw new Error("Invalid entry version");
+                }
+                const storedEntryHash = buffers.entryHeader.subarray(EntryHeaderOffsets_V0.ENTRY_HASH, EntryHeaderOffsets_V0.ENTRY_HASH + Bytes.SHAKE_128);
+                entriesReader.read(buffers.entry, true);
+                const entryHash = shake128(buffers.entry);
+                if (!entryHash.equals(storedEntryHash)) {
+                    throw new Error("Invalid entry hash");
+                }
+                const dataLocation = buffers.entry.readUIntBE(EntryOffsets_V0.LOCATION, Bytes.UINT_48) + (buffers.entry[EntryOffsets_V0.LOCATION + 6] * Values.UINT_48_ROLLOVER); // Maximum read value in nodejs is 6 bytes, so we need a workaround for 7 bytes
+                if (dataLocation > 0) {
+                    const storedDataHash = buffers.entry.subarray(EntryOffsets_V0.DATA_HASH, EntryOffsets_V0.DATA_HASH + Bytes.SHAKE_128);
+                    const dataVersion = buffers.entry.readUInt32BE(EntryOffsets_V0.DATA_VERSION);
+                    const keySize = buffers.entry.readUInt32BE(EntryOffsets_V0.KEY_SIZE);
+                    const valueSize = buffers.entry.readUInt32BE(EntryOffsets_V0.VALUE_SIZE);
+                    const dataBuffer = Buffer.allocUnsafe(keySize + valueSize);
+                    fdData.read(dataBuffer, dataLocation, true);
+                    const dataHash = shake128(dataBuffer);
+                    if (!dataHash.equals(storedDataHash)) {
+                        throw new Error("Invalid data hash");
+                    }
+                    const key:string = (dataBuffer as any).utf8Slice(0, keySize); // small optimization non-documented methods
+                    const valueLocation = dataLocation + keySize;
+                    const loadingEntry:LoadingEntry = {
+                        entry: {
+                            block: null,
+                            dataBlock: null,
+                            dataVersion: dataVersion,
+                            valueLocation: valueLocation,
+                            purging: Purging.None
+                        },
+                        location: entryLocation,
+                        dataLocation: dataLocation,
+                        valueSize: valueSize
+                    };
+                    return { key, data: loadingEntry };
+                }
+            } catch (e) {
+                console.error(e);
+                // TODO: log invalid entry
+            }
+        }
     }
     private _loadDataSync() {
         const fd = openFiles({
@@ -77,8 +136,10 @@ export class Persistency {
             dataFile: this.dataFile
         }, this._context.fs);
         try {
-            const entryHeaderBuffer = Buffer.allocUnsafe(EntryHeaderOffsets_V0.SIZE);
-            const entryBuffer = Buffer.allocUnsafe(EntryOffsets_V0.SIZE);
+            const buffers = {
+                entryHeader: Buffer.allocUnsafe(EntryHeaderOffsets_V0.SIZE),
+                entry: Buffer.allocUnsafe(EntryOffsets_V0.SIZE)
+            };
             const data = new Map<string, [LoadingEntry, ...LoadingEntry[]]>();
             const magic = Buffer.allocUnsafe(4);
             const entriesReader = fd.entries.reader();
@@ -96,64 +157,22 @@ export class Persistency {
                     throw new Error("Entries file is not a persistency one");
                 }
                 while (true) {
-                    const entryLocation = entriesReader.offset;
-                    try {
-                        if (entriesReader.read(entryHeaderBuffer, false)) {
-                            break;
+                    const entry = this._readEntry(entriesReader, fd.data, buffers);
+                    if (entry) {
+                        const loadingEntries = data.get(entry.key);
+                        if (loadingEntries) {
+                            loadingEntries.push(entry.data);
+                        } else {
+                            data.set(entry.key, [ entry.data ]);
                         }
-                        if (entryHeaderBuffer[EntryHeaderOffsets_V0.ENTRY_VERSION] !== 0) {
-                            entriesReader.advance(entryBuffer.length);
-                            throw new Error("Invalid entry version");
-                        }
-                        const storedEntryHash = entryHeaderBuffer.subarray(EntryHeaderOffsets_V0.ENTRY_HASH, EntryHeaderOffsets_V0.ENTRY_HASH + Bytes.SHAKE_128);
-                        entriesReader.read(entryBuffer, true);
-                        const entryHash = shake128(entryBuffer);
-                        if (!entryHash.equals(storedEntryHash)) {
-                            throw new Error("Invalid entry hash");
-                        }
-                        const dataLocation = entryBuffer.readUIntBE(EntryOffsets_V0.LOCATION, Bytes.UINT_48) + (entryBuffer[EntryOffsets_V0.LOCATION + 6] * Values.UINT_48_ROLLOVER); // Maximum read value in nodejs is 6 bytes, so we need a workaround for 7 bytes
-                        if (dataLocation > 0) {
-                            const storedDataHash = entryBuffer.subarray(EntryOffsets_V0.DATA_HASH, EntryOffsets_V0.DATA_HASH + Bytes.SHAKE_128);
-                            const dataVersion = entryBuffer.readUInt32BE(EntryOffsets_V0.DATA_VERSION);
-                            const keySize = entryBuffer.readUInt32BE(EntryOffsets_V0.KEY_SIZE);
-                            const valueSize = entryBuffer.readUInt32BE(EntryOffsets_V0.VALUE_SIZE);
-                            const dataBuffer = Buffer.allocUnsafe(keySize + valueSize);
-                            fd.data.read(dataBuffer, dataLocation, true);
-                            const dataHash = shake128(dataBuffer);
-                            if (!dataHash.equals(storedDataHash)) {
-                                // TODO: Test this
-                                throw new Error("Invalid data hash");
-                            }
-                            const key:string = (dataBuffer as any).utf8Slice(0, keySize); // small optimization non-documented methods
-                            const valueLocation = dataLocation + keySize;
-                            const loadingEntry:LoadingEntry = {
-                                entry: {
-                                    block: null,
-                                    dataBlock: null,
-                                    dataVersion: dataVersion,
-                                    valueLocation: valueLocation,
-                                    purging: Purging.None
-                                },
-                                location: entryLocation,
-                                dataLocation: dataLocation,
-                                valueSize: valueSize
-                            };
-                            const loadingEntries = data.get(key);
-                            if (loadingEntries) {
-                                loadingEntries.push(loadingEntry);
-                            } else {
-                                data.set(key, [ loadingEntry ]);
-                            }
-                        }
-                    } catch (e) {
-                        console.error(e);
-                        // TODO: log invalid entry
+                    } else {
+                        break;
                     }
                 }
             }
             const allLoadingEntries:LoadingEntry[] = [];
             for (const [ key, loadingEntries ] of data) {
-                loadingEntries.sort((a, b) => {
+                loadingEntries.sort((a, b) => { // Sort entries based on DataVersion
                     if (a.entry.dataVersion > b.entry.dataVersion) {
                         if ((a.entry.dataVersion - b.entry.dataVersion) >= Values.UINT_32_HALF) {
                             return -1;
@@ -179,7 +198,7 @@ export class Persistency {
                         entries.push(loadingEntries[i].entry as Required<Entry>);
                         allLoadingEntries.push(loadingEntries[i]);
                     } else {
-                        this._fd.entries.write(EMPTY_ENTRY, loadingEntries[i].location);
+                        fd.entries.write(EMPTY_ENTRY, loadingEntries[i].location);
                     }
                 }
                 allLoadingEntries.push(loadingEntries[loadingEntries.length - 1]);
@@ -265,6 +284,8 @@ export class Persistency {
                                     this._fd.entries.write(entryHeaderBuffer, newEntry.block.start);
                                     this._fd.entries.write(entryBuffer, newEntry.block.start + entryHeaderBuffer.length);
                                     this._fd.entries.fsync();
+
+                                    this._checkTruncate();
                                     
                                     this._purgeEntryAndData(key, lastEntry);
                                     if (dataSize < space) {
@@ -326,6 +347,7 @@ export class Persistency {
                         entries.push(newEntry);
                         this._fd.entries.write(entryBuffer, newEntry.block.start);
                         this._fd.entries.fsync();
+                        this._checkTruncate();
                         this._purgeEntry(key, lastEntryBlock.data);
                     }
                     lastEntryBlock = lastEntryBlock.prev;
@@ -389,16 +411,18 @@ export class Persistency {
         this._purgeEntries.push({
             key: key,
             entry: entry,
-            ts: this._context.now() + this.reclaimTimeout
+            ttl: this._context.now() + this.reclaimTimeout
         });
+        this._checkPurgeTimeout();
     }
     private _purgeEntry(key:string, entry:Entry) {
         entry.purging = Purging.Entry;
         this._purgeEntries.push({
             key: key,
             entry: entry,
-            ts: this._context.now() + this.reclaimTimeout
+            ttl: this._context.now() + this.reclaimTimeout
         });
+        this._checkPurgeTimeout();
     }
     private _checkTruncate() {
         this._checkTruncateEntries();
@@ -420,6 +444,24 @@ export class Persistency {
         }
         this._fileSizes.data = end;
     }
+    private _checkPurgeTimeout() {
+        if (this.reclaimTimeout > 0) {
+            if (this._purgeEntries.length > 0) {
+                if (this._purgeTimeout == null) {
+                    this._purgeTimeout = this._context.setTimeout(() => {
+                        this._purgeTimeout = null;
+                        if (this._checkPurge()) {
+                            this._compact();
+                        }
+                        this._checkTruncate();
+                    }, this.reclaimTimeout);
+                }
+            } else if (this._purgeTimeout != null) {
+                this._context.clearTimeout(this._purgeTimeout);
+                this._purgeTimeout = null;
+            }
+        }
+    }
     private _checkPurge() {
         let needsCompact = false;
         if (this._purgeEntries.length > 0) {
@@ -427,7 +469,7 @@ export class Persistency {
             let i = 0;
             while (i < this._purgeEntries.length) {
                 const data = this._purgeEntries[i];
-                if (data.ts <= now) {
+                if (data.ttl <= now) {
                     if (data.entry.purging === Purging.EntryAndData) {
                         needsCompact = !this._deleteEntryAndData(data.entry) || needsCompact;
                     } else {
@@ -442,6 +484,7 @@ export class Persistency {
             }
             if (i > 0) {
                 this._purgeEntries.splice(0, i);
+                this._checkPurgeTimeout();
             }
         }
         return needsCompact;
@@ -515,6 +558,8 @@ export class Persistency {
         this._fd.entries.write(entryBuffer, entry.block.start + entryHeaderBuffer.length);
         this._fd.entries.fsync();
 
+        this._checkTruncate();
+
         if (entries && this.reclaimTimeout <= 0) {
             // Delete old entries after data write
             for (const entry of entries.splice(0, entries.length - 1)) {
@@ -577,8 +622,15 @@ export class Persistency {
             return;
         }
         this._closed = true;
-        this.compact();
+        if (this._purgeTimeout != null) {
+            this._context.clearTimeout(this._purgeTimeout);
+            this._purgeTimeout = null;
+        }
         if (this._fd) {
+            if (this._checkPurge()) {
+                this._compact();
+            }
+            this._checkTruncate();
             this._fd.entries.fsync();
             this._fd.data.fsync();
             this._fd.close();

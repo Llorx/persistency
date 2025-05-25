@@ -19,6 +19,7 @@ function read(fd:number, buffer:Buffer, position:number, read0Error:boolean, con
     } while (offset !== buffer.length);
     return false;
 }
+export type Reader = ReturnType<typeof reader>;
 function reader(fd:number, context:ReadContext) {
     let offset = 0;
     let done = false;
@@ -49,6 +50,7 @@ type FdActionContext = {
     fsyncSync(fd:number):void;
     ftruncateSync(fd:number, length:number):void;
 } & ReadContext;
+export type Fd = ReturnType<typeof fdAction>;
 function fdAction(fd:number, context:FdActionContext) {
     return {
         reader() {

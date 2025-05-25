@@ -19,6 +19,7 @@ export function assertEqual<T>(a:T, b:NoInfer<T>) {
 type SpyMethod<ARGS extends any[], RET> = {
     assert(calls:ARGS[]):void;
     splice():ARGS[];
+    pushNextAllow(count?:number):void;
     pushNextReturn(ret:RET):void;
     pushNextError(error:Error):void;
 };
@@ -50,15 +51,17 @@ function spy<T extends object>(obj:T) {
                     return proxy;
                 }
                 const methodCalls:any[][] = [];
-                const mockReturn:({value:any}|{error:Error})[] = [];
+                const mockReturn:({value:any}|{error:Error}|{allow:number})[] = [];
                 proxy = new Proxy((...args:any[]) => {
                     methodCalls.push(args);
                     const next = mockReturn.shift();
                     if (next != null) {
                         if ("error" in next) {
                             throw next.error;
-                        } else {
+                        } else if ("value" in next) {
                             return next.value;
+                        } else if (--next.allow > 0) {
+                            mockReturn.unshift(next);
                         }
                     }
                     return res(...args);
@@ -75,6 +78,10 @@ function spy<T extends object>(obj:T) {
                         } else if (p === "pushNextError") {
                             return (error:Error) => {
                                 mockReturn.push({error});
+                            };
+                        } else if (p === "pushNextAllow") {
+                            return (allow?:number) => {
+                                mockReturn.push({ allow: allow || 1 });
                             };
                         } else if (p === "splice") {
                             return () => {
