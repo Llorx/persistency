@@ -1218,7 +1218,6 @@ test.describe("Persistency", test => {
                 }
             }
         });
-        
         test("should compact empty keys and values", {
             async ARRANGE(after) {
                 const { persistency } = await newPersistency(after, {
@@ -1236,6 +1235,117 @@ test.describe("Persistency", test => {
                 },
                 "should count the number of entries"(_, { persistency }) {
                     assertEqual(persistency.count(), 1);
+                }
+            }
+        });
+        test("should fill a big space with multiple entries at the same time", {
+            async ARRANGE(after) {
+                const { persistency } = await newPersistency(after, {
+                    reclaimTimeout: 0
+                });
+                persistency.set("test0", value1);
+                persistency.set("test1", value2);
+                persistency.set("test2", Buffer.concat([ value1, value2, value3, value4 ]));
+                persistency.set("test3", value3);
+                persistency.set("test4", value4);
+                persistency.set("test5", value1);
+                persistency.set("test6", value2);
+                return { persistency };
+            },
+            ACT({ persistency }) {
+                persistency.delete("test2");
+            },
+            ASSERTS: {
+                "should have allocated entries"(_, { persistency }) {
+                    assertDeepEqual(persistency.getAllocatedBlocks().entries, [
+                        [0, getEntryOffset(5) + entrySize]
+                    ]);
+                },
+                "should have allocated data"(_, { persistency }) {
+                    assertDeepEqual(persistency.getAllocatedBlocks().data, [
+                        [0, getDataOffset(5, 3).end],
+                        [getDataOffset(5, 4).start + value4.length, getDataOffset(5, 6).end - value4.length]
+                    ]);
+                },
+                "should have test0 data"(_, { persistency }) {
+                    assertDeepEqual(persistency.get("test0"), value1);
+                },
+                "should have test1 data"(_, { persistency }) {
+                    assertDeepEqual(persistency.get("test1"), value2);
+                },
+                "should not have test2 data"(_, { persistency }) {
+                    assertDeepEqual(persistency.get("test2"), null);
+                },
+                "should have test3 data"(_, { persistency }) {
+                    assertDeepEqual(persistency.get("test3"), value3);
+                },
+                "should have test4 data"(_, { persistency }) {
+                    assertDeepEqual(persistency.get("test4"), value4);
+                },
+                "should have test5 data"(_, { persistency }) {
+                    assertDeepEqual(persistency.get("test5"), value1);
+                },
+                "should have test6 data"(_, { persistency }) {
+                    assertDeepEqual(persistency.get("test6"), value2);
+                },
+                "should count the number of entries"(_, { persistency }) {
+                    assertEqual(persistency.count(), 6);
+                }
+            }
+        });
+        test("should load properly after filling a big space with multiple entries at the same time", {
+            async ARRANGE(after) {
+                const { persistency, folder } = await newPersistency(after, {
+                    reclaimTimeout: 0
+                });
+                persistency.set("test0", value1);
+                persistency.set("test1", value2);
+                persistency.set("test2", Buffer.concat([ value1, value2, value3, value4 ]));
+                persistency.set("test3", value3);
+                persistency.set("test4", value4);
+                persistency.set("test5", value1);
+                persistency.set("test6", value2);
+                persistency.delete("test2");
+                return { folder };
+            },
+            ACT({ folder }, after) {
+                return newPersistency(after, { folder });
+            },
+            ASSERTS: {
+                "should have allocated entries"({ persistency }) {
+                    assertDeepEqual(persistency.getAllocatedBlocks().entries, [
+                        [0, getEntryOffset(5) + entrySize]
+                    ]);
+                },
+                "should have allocated data"({ persistency }) {
+                    assertDeepEqual(persistency.getAllocatedBlocks().data, [
+                        [0, getDataOffset(5, 3).end],
+                        [getDataOffset(5, 4).start + value4.length, getDataOffset(5, 6).end - value4.length]
+                    ]);
+                },
+                "should have test0 data"({ persistency }) {
+                    assertDeepEqual(persistency.get("test0"), value1);
+                },
+                "should have test1 data"({ persistency }) {
+                    assertDeepEqual(persistency.get("test1"), value2);
+                },
+                "should not have test2 data"({ persistency }) {
+                    assertDeepEqual(persistency.get("test2"), null);
+                },
+                "should have test3 data"({ persistency }) {
+                    assertDeepEqual(persistency.get("test3"), value3);
+                },
+                "should have test4 data"({ persistency }) {
+                    assertDeepEqual(persistency.get("test4"), value4);
+                },
+                "should have test5 data"({ persistency }) {
+                    assertDeepEqual(persistency.get("test5"), value1);
+                },
+                "should have test6 data"({ persistency }) {
+                    assertDeepEqual(persistency.get("test6"), value2);
+                },
+                "should count the number of entries"({ persistency }) {
+                    assertEqual(persistency.count(), 6);
                 }
             }
         });

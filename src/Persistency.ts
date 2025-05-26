@@ -297,7 +297,7 @@ export class Persistency {
                                         blocks.splice(i, 1);
                                     }
                                     if (maxSpace === space) {
-                                        let maxSpace = 0;
+                                        maxSpace = 0;
                                         for (let i = 0; i < blocks.length; i++) {
                                             if (blocks[i].space > maxSpace) {
                                                 maxSpace = blocks[i].space;
@@ -327,7 +327,7 @@ export class Persistency {
             if (blocks.length > 0) {
                 do {
                     if (!lastEntryBlock.data.purging) {
-                        const { location, block } = blocks.shift()!;
+                        const { location, space, block } = blocks[0];
                         if (lastEntryBlock.start < location) {
                             break;
                         }
@@ -354,6 +354,12 @@ export class Persistency {
                         this._fd.entries.fsync();
                         this._checkTruncate();
                         this._purgeEntry(key, lastEntryBlock.data);
+                        const dataSize = lastEntryBlock.end - lastEntryBlock.start;
+                        if (dataSize < space) {
+                            blocks[0].space = space - dataSize;
+                        } else {
+                            blocks.shift();
+                        }
                     }
                     lastEntryBlock = lastEntryBlock.prev;
                 } while (lastEntryBlock && blocks.length > 0 && lastEntryBlock.start > blocks[0].location);

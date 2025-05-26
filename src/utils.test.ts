@@ -411,7 +411,7 @@ test.describe("utils", test => {
                 }
             }
         });
-        test("should offset", {
+        test("should return the offset", {
             async ARRANGE(after) {
                 const files = await newFiles(after);
                 const context = newOpenFilesContext();
