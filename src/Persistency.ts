@@ -368,7 +368,7 @@ export class Persistency {
     }
     private _deleteEntryAndData(entry:Entry) {
         const memoryShrinked = this._deleteEntry(entry);
-        return this._dataMemory.free(entry.dataBlock) || memoryShrinked;
+        return this._dataMemory.free(entry.dataBlock) && memoryShrinked;
     }
     private _deleteEntry(entry:Entry) {
         this._fd.entries.write(EMPTY_ENTRY, entry.block.start);
