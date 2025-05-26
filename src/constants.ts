@@ -2,6 +2,8 @@ import { shake128 } from "./utils";
 
 export const MAGIC = Buffer.from([ 0xFA, 0xF2, 0xD6, 0x91 ]);
 
+export const DATA_VERSION = Buffer.from([ 0x00 ]);
+
 export const EMPTY_ENTRY = Buffer.allocUnsafe(EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.SIZE);
 EMPTY_ENTRY[EntryHeaderOffsets_V0.ENTRY_VERSION] = 0;
 EMPTY_ENTRY.fill(0, EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.LOCATION);
@@ -33,4 +35,8 @@ export const enum EntryOffsets_V0 {
     KEY_SIZE = DATA_VERSION + Bytes.UINT_32,
     VALUE_SIZE = KEY_SIZE + Bytes.UINT_32,
     SIZE = VALUE_SIZE + Bytes.UINT_32
+}
+export const enum DataOffsets_V0 {
+    VERSION = 0,
+    SIZE = VERSION + Bytes.UINT_8
 }

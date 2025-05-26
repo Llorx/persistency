@@ -3,7 +3,7 @@ import * as Path from "path";
 
 import { Fd, openFiles, OpenFilesContext, Reader, shake128 } from "./utils";
 import { MemoryBlocks, Block } from "./MemoryBlocks";
-import { EMPTY_ENTRY, Bytes, EntryHeaderOffsets_V0, EntryOffsets_V0, MAGIC, Values } from "./constants";
+import { DATA_VERSION, EMPTY_ENTRY, Bytes, EntryHeaderOffsets_V0, EntryOffsets_V0, MAGIC, Values, DataOffsets_V0 } from "./constants";
 
 export type PersistencyOptions = {
     folder:string;
@@ -102,14 +102,17 @@ export class Persistency {
                     const dataVersion = buffers.entry.readUInt32BE(EntryOffsets_V0.DATA_VERSION);
                     const keySize = buffers.entry.readUInt32BE(EntryOffsets_V0.KEY_SIZE);
                     const valueSize = buffers.entry.readUInt32BE(EntryOffsets_V0.VALUE_SIZE);
-                    const dataBuffer = Buffer.allocUnsafe(keySize + valueSize);
+                    const dataBuffer = Buffer.allocUnsafe(DataOffsets_V0.SIZE + keySize + valueSize);
                     fdData.read(dataBuffer, dataLocation, true);
+                    if (dataBuffer[DataOffsets_V0.VERSION] !== 0) {
+                        throw new Error("Invalid data version");
+                    }
                     const dataHash = shake128(dataBuffer);
                     if (!dataHash.equals(storedDataHash)) {
                         throw new Error("Invalid data hash");
                     }
-                    const key:string = (dataBuffer as any).utf8Slice(0, keySize); // small optimization non-documented methods
-                    const valueLocation = dataLocation + keySize;
+                    const key:string = (dataBuffer as any).utf8Slice(DataOffsets_V0.SIZE, DataOffsets_V0.SIZE + keySize); // small optimization non-documented methods
+                    const valueLocation = dataLocation + DataOffsets_V0.SIZE + keySize;
                     const loadingEntry:LoadingEntry = {
                         entry: {
                             block: null,
@@ -246,8 +249,8 @@ export class Persistency {
                                 if (dataSize <= space) {
                                     const dataBuffer = Buffer.allocUnsafe(dataSize);
                                     this._fd.data.read(dataBuffer, lastDataBlock.start, true);
-                                    const keySize = lastDataBlock.data.valueLocation - lastDataBlock.data.dataBlock.start;
-                                    const key:string = (dataBuffer as any).utf8Slice(0, lastDataBlock.data.valueLocation - lastDataBlock.data.dataBlock.start); // small optimization non-documented methods
+                                    const keySize = lastDataBlock.data.valueLocation - (lastDataBlock.data.dataBlock.start + DataOffsets_V0.SIZE);
+                                    const key:string = (dataBuffer as any).utf8Slice(DataOffsets_V0.SIZE, DataOffsets_V0.SIZE + keySize); // small optimization non-documented methods
                                     const entries = this._data.get(key)!;
     
                                     const lastEntry = entries[entries.length - 1];
@@ -259,7 +262,7 @@ export class Persistency {
                                         purging: Purging.None
                                     });
                                     const newEntry = this._getFreeDataAfterBlock(block.prev, dataSize, partialEntry);
-                                    newEntry.valueLocation = newEntry.dataBlock.start + keySize;
+                                    newEntry.valueLocation = newEntry.dataBlock.start + DataOffsets_V0.SIZE + keySize;
                                     entries.push(newEntry);
     
                                     const entryHeaderBuffer = Buffer.allocUnsafe(EntryHeaderOffsets_V0.SIZE);
@@ -274,7 +277,7 @@ export class Persistency {
                                     dataHash.copy(entryBuffer, EntryOffsets_V0.DATA_HASH);
                                     entryBuffer.writeUInt32BE(newEntry.dataVersion, EntryOffsets_V0.DATA_VERSION);
                                     entryBuffer.writeUInt32BE(keySize, EntryOffsets_V0.KEY_SIZE);
-                                    entryBuffer.writeUInt32BE(dataSize - keySize, EntryOffsets_V0.VALUE_SIZE);
+                                    entryBuffer.writeUInt32BE((dataSize - DataOffsets_V0.SIZE) - keySize, EntryOffsets_V0.VALUE_SIZE);
                                     const entryHash = shake128(entryBuffer);
                                     entryHash.copy(entryHeaderBuffer, EntryHeaderOffsets_V0.ENTRY_HASH);
     
@@ -330,9 +333,11 @@ export class Persistency {
                         }
                         const entryBuffer = Buffer.allocUnsafe(lastEntryBlock.end - lastEntryBlock.start);
                         this._fd.entries.read(entryBuffer, lastEntryBlock.start, true);
-                        const keySize = lastEntryBlock.data.valueLocation - lastEntryBlock.data.dataBlock.start;
+                        const keySize = lastEntryBlock.data.valueLocation - (lastEntryBlock.data.dataBlock.start + DataOffsets_V0.SIZE);
                         const keyBuffer = Buffer.allocUnsafe(keySize);
-                        this._fd.data.read(keyBuffer, lastEntryBlock.data.dataBlock.start, true);
+                        if (keyBuffer.length > 0) {
+                            this._fd.data.read(keyBuffer, lastEntryBlock.data.dataBlock.start + DataOffsets_V0.SIZE, true);
+                        }
                         const key:string = (keyBuffer as any).utf8Slice(); // small optimization non-documented methods
                         const entries = this._data.get(key)!;
 
@@ -491,7 +496,9 @@ export class Persistency {
     }
     private _getEntryValue(entry:Entry) {
         const valueBuffer = Buffer.allocUnsafe(entry.dataBlock.end - entry.valueLocation);
-        this._fd.data.read(valueBuffer, entry.valueLocation, true); // Always read from file so can have more data than available RAM. The OS will handle the caché
+        if (valueBuffer.length > 0) {
+            this._fd.data.read(valueBuffer, entry.valueLocation, true); // Always read from file so can have more data than available RAM. The OS will handle the caché
+        }
         return valueBuffer;
     }
     compact() {
@@ -513,7 +520,7 @@ export class Persistency {
         let needsCompact = this._checkPurge();
         const entries = this._data.get(key);
         const keyBuffer = Buffer.from(key);
-        const dataHash = shake128(keyBuffer, value);
+        const dataHash = shake128(DATA_VERSION, keyBuffer, value);
 
         // TODO: Duplicated in compact logic. Fix somehow...
         const partialEntry = this._getFreeEntryLocation({
@@ -523,8 +530,8 @@ export class Persistency {
             dataVersion: 0,
             purging: Purging.None
         });
-        const entry = this._getFreeDataLocation(keyBuffer.length + value.length, partialEntry);
-        entry.valueLocation = entry.dataBlock.start + keyBuffer.length;
+        const entry = this._getFreeDataLocation(DataOffsets_V0.SIZE +  keyBuffer.length + value.length, partialEntry);
+        entry.valueLocation = entry.dataBlock.start + DataOffsets_V0.SIZE + keyBuffer.length;
 
         let lastEntry;
         if (entries) {
@@ -550,8 +557,9 @@ export class Persistency {
         const entryHash = shake128(entryBuffer);
         entryHash.copy(entryHeaderBuffer, EntryHeaderOffsets_V0.ENTRY_HASH);
 
-        this._fd.data.write(keyBuffer, entry.dataBlock.start);
-        this._fd.data.write(value, entry.dataBlock.start + keyBuffer.length);
+        this._fd.data.write(DATA_VERSION, entry.dataBlock.start);
+        this._fd.data.write(keyBuffer, entry.dataBlock.start + DataOffsets_V0.SIZE);
+        this._fd.data.write(value, entry.dataBlock.start + DataOffsets_V0.SIZE + keyBuffer.length);
         this._fd.data.fsync();
 
         this._fd.entries.write(entryHeaderBuffer, entry.block.start);

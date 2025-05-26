@@ -20,8 +20,8 @@ test.describe("Persistency", test => {
     function getDataOffset(keyLength:number, dataI:number) {
         // All values have same length (value1, value2, etc)
         return {
-            start: constants.MAGIC.length + ((keyLength + value1.length) * dataI),
-            end: constants.MAGIC.length + ((keyLength + value1.length) * (dataI + 1))
+            start: constants.MAGIC.length + ((constants.DataOffsets_V0.SIZE + keyLength + value1.length) * dataI),
+            end: constants.MAGIC.length + ((constants.DataOffsets_V0.SIZE + keyLength + value1.length) * (dataI + 1))
         };
     }
     async function overwriteFile(file:string, offset:number, buffer:Buffer) {
@@ -138,6 +138,30 @@ test.describe("Persistency", test => {
             },
             "should count the number of entries"(_, { persistency }) {
                 assertEqual(persistency.count(), 1);
+            }
+        }
+    });
+    test("should set and get empty data", {
+        ARRANGE(after) {
+            return newPersistency(after);
+        },
+        ACT({ persistency }) {
+            persistency.set("test0", value1);
+            persistency.set("", Buffer.allocUnsafe(0));
+            persistency.set("test2", value2);
+        },
+        ASSERTS: {
+            "should have test0 data"(_, { persistency }) {
+                assertDeepEqual(persistency.get("test0"), value1);
+            },
+            "should have empty data"(_, { persistency }) {
+                assertDeepEqual(persistency.get(""), Buffer.allocUnsafe(0));
+            },
+            "should have test2 data"(_, { persistency }) {
+                assertDeepEqual(persistency.get("test2"), value2);
+            },
+            "should count the number of entries"(_, { persistency }) {
+                assertEqual(persistency.count(), 3);
             }
         }
     });
@@ -1019,8 +1043,8 @@ test.describe("Persistency", test => {
                 persistency.set("aaa", value1);
                 const size = await getFileSizes(persistency);
                 // Block compacting
-                // Allow 4 original writes and then block the remaining
-                context.fs.writeSync.pushNextAllow(4);
+                // Allow 5 original writes and then block the remaining
+                context.fs.writeSync.pushNextAllow(5);
                 for (let i = 0; i < 10; i++) {
                     context.fs.ftruncateSync.pushNextReturn();
                     context.fs.writeSync.pushNextReturn();
@@ -1054,8 +1078,8 @@ test.describe("Persistency", test => {
                 persistency.set("aaa", value1);
                 const size = await getFileSizes(persistency);
                 // Block compacting
-                // Allow 4 original writes and then block the remaining
-                context.fs.writeSync.pushNextAllow(4);
+                // Allow 5 original writes and then block the remaining
+                context.fs.writeSync.pushNextAllow(5);
                 for (let i = 0; i < 10; i++) {
                     context.fs.ftruncateSync.pushNextReturn();
                     context.fs.writeSync.pushNextReturn();
@@ -1094,8 +1118,8 @@ test.describe("Persistency", test => {
                 persistency.set("aaa", value1);
                 const size = await getFileSizes(persistency);
                 // Block compacting
-                // Allow 4 original writes and then block the remaining
-                context.fs.writeSync.pushNextAllow(4);
+                // Allow 5 original writes and then block the remaining
+                context.fs.writeSync.pushNextAllow(5);
                 for (let i = 0; i < 10; i++) {
                     context.fs.ftruncateSync.pushNextReturn();
                     context.fs.writeSync.pushNextReturn();
@@ -1144,6 +1168,71 @@ test.describe("Persistency", test => {
                 },
                 async "data file size must reduce"(_, { persistency, size }) {
                     assertEqual(await getFileSize(persistency.dataFile) < size.data, true);
+                },
+                "should count the number of entries"(_, { persistency }) {
+                    assertEqual(persistency.count(), 1);
+                }
+            }
+        });
+        test("should compact empty keys data", {
+            async ARRANGE(after) {
+                const { persistency } = await newPersistency(after, {
+                    reclaimTimeout: 0
+                });
+                return { persistency };
+            },
+            ACT({ persistency }) {
+                persistency.set("", value1);
+                persistency.set("", value2);
+            },
+            ASSERTS: {
+                "should have empty key data"(_, { persistency }) {
+                    assertDeepEqual(persistency.get(""), value2);
+                },
+                "should count the number of entries"(_, { persistency }) {
+                    assertEqual(persistency.count(), 1);
+                }
+            }
+        });
+        test("should compact empty keys entries", {
+            async ARRANGE(after) {
+                const { persistency } = await newPersistency(after, {
+                    reclaimTimeout: 0
+                });
+                return { persistency };
+            },
+            ACT({ persistency }) {
+                persistency.set("", Buffer.allocUnsafe(0));
+                persistency.set("test0",  Buffer.concat([value2, value3]));
+                persistency.set("", Buffer.concat([value3, value4]));
+            },
+            ASSERTS: {
+                "should have test0 data"(_, { persistency }) {
+                    assertDeepEqual(persistency.get("test0"), Buffer.concat([value2, value3]));
+                },
+                "should have empty key data"(_, { persistency }) {
+                    assertDeepEqual(persistency.get(""), Buffer.concat([value3, value4]));
+                },
+                "should count the number of entries"(_, { persistency }) {
+                    assertEqual(persistency.count(), 2);
+                }
+            }
+        });
+        
+        test("should compact empty keys and values", {
+            async ARRANGE(after) {
+                const { persistency } = await newPersistency(after, {
+                    reclaimTimeout: 0
+                });
+                return { persistency };
+            },
+            ACT({ persistency }) {
+                persistency.set("", value1);
+                persistency.set("", Buffer.allocUnsafe(0));
+            },
+            ASSERTS: {
+                "should have empty key data"(_, { persistency }) {
+                    assertDeepEqual(persistency.get(""), Buffer.allocUnsafe(0));
                 },
                 "should count the number of entries"(_, { persistency }) {
                     assertEqual(persistency.count(), 1);
