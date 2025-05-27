@@ -7,7 +7,8 @@ import { DATA_VERSION, EMPTY_ENTRY, Bytes, EntryHeaderOffsets_V0, EntryOffsets_V
 
 export type PersistencyOptions = {
     folder:string;
-    reclaimTimeout?:number;
+    reclaimDelay?:number;
+    autoCompactTimeout?:number;
 };
 export type PersistencyContext = Partial<{
     now():number; // Inject "world access" dependency for easier testing
@@ -46,10 +47,10 @@ export class Persistency {
     private _closed = false;
     readonly entriesFile;
     readonly dataFile;
-    readonly reclaimTimeout;
+    readonly reclaimDelay;
     private _data = new Map<string, [Entry, ...Entry[]]>();
-    private _purgeEntries:{key:string; entry:Entry; ttl:number}[] = [];
-    private _purgeTimeout:NodeJS.Timeout|null = null;
+    private _reclaimEntries:{key:string; entry:Entry; ttl:number}[] = [];
+    private _reclaimTimeout:NodeJS.Timeout|null = null;
     private _entriesMemory = new MemoryBlocks<Entry>(MAGIC.length);
     private _dataMemory = new MemoryBlocks<Entry>(MAGIC.length);
     private _context;
@@ -72,7 +73,7 @@ export class Persistency {
         this.dataFile = Path.join(options.folder, "data.db");
         this.reclaimTimeout = options.reclaimTimeout != null ? options.reclaimTimeout : 10000;
         this._fd = this._loadDataSync();
-        this._checkPurge();
+        this._checkReclaim();
         this._compact();
         this._checkTruncate();
     }
@@ -191,12 +192,12 @@ export class Persistency {
                 });
                 const entries = [];
                 for (let i = 0; i < loadingEntries.length - 1; i++) {
-                    if (this.reclaimTimeout > 0) {
+                    if (this.reclaimDelay > 0) {
                         const nextEntry = loadingEntries[i + 1].entry;
                         if (nextEntry.dataVersion === loadingEntries[i].entry.dataVersion) {
-                            this._purgeEntry(key, loadingEntries[i].entry as Required<Entry>);
+                            this._reclaimEntry(key, loadingEntries[i].entry as Required<Entry>);
                         } else {
-                            this._purgeEntryAndData(key, loadingEntries[i].entry as Required<Entry>);
+                            this._reclaimEntryAndData(key, loadingEntries[i].entry as Required<Entry>);
                         }
                         entries.push(loadingEntries[i].entry as Required<Entry>);
                         allLoadingEntries.push(loadingEntries[i]);
@@ -226,7 +227,7 @@ export class Persistency {
     private _compact() {
         this._compactData();
         this._compactEntries();
-        if (this._checkPurge()) {
+        if (this._checkReclaim()) {
             this._compact();
         }
     }
@@ -290,7 +291,7 @@ export class Persistency {
 
                                     this._checkTruncate();
                                     
-                                    this._purgeEntryAndData(key, lastEntry);
+                                    this._reclaimEntryAndData(key, lastEntry);
                                     if (dataSize < space) {
                                         blocks[i].space = space - dataSize;
                                     } else {
@@ -353,7 +354,7 @@ export class Persistency {
                         this._fd.entries.write(entryBuffer, newEntry.block.start);
                         this._fd.entries.fsync();
                         this._checkTruncate();
-                        this._purgeEntry(key, lastEntryBlock.data);
+                        this._reclaimEntry(key, lastEntryBlock.data);
                         const dataSize = lastEntryBlock.end - lastEntryBlock.start;
                         if (dataSize < space) {
                             blocks[0].space = space - dataSize;
@@ -417,23 +418,23 @@ export class Persistency {
         }
         return entry as Entry;
     }
-    private _purgeEntryAndData(key:string, entry:Entry) {
+    private _reclaimEntryAndData(key:string, entry:Entry) {
         entry.purging = Purging.EntryAndData;
-        this._purgeEntries.push({
+        this._reclaimEntries.push({
             key: key,
             entry: entry,
-            ttl: this._context.now() + this.reclaimTimeout
+            ttl: this._context.now() + this.reclaimDelay
         });
-        this._checkPurgeTimeout();
+        this._checkReclaimTimeout();
     }
-    private _purgeEntry(key:string, entry:Entry) {
+    private _reclaimEntry(key:string, entry:Entry) {
         entry.purging = Purging.Entry;
-        this._purgeEntries.push({
+        this._reclaimEntries.push({
             key: key,
             entry: entry,
-            ttl: this._context.now() + this.reclaimTimeout
+            ttl: this._context.now() + this.reclaimDelay
         });
-        this._checkPurgeTimeout();
+        this._checkReclaimTimeout();
     }
     private _checkTruncate() {
         this._checkTruncateEntries();
@@ -455,31 +456,31 @@ export class Persistency {
         }
         this._fileSizes.data = end;
     }
-    private _checkPurgeTimeout() {
-        if (this.reclaimTimeout > 0) {
-            if (this._purgeEntries.length > 0) {
-                if (this._purgeTimeout == null) {
-                    this._purgeTimeout = this._context.setTimeout(() => {
-                        this._purgeTimeout = null;
-                        if (this._checkPurge()) {
+    private _checkReclaimTimeout() {
+        if (this.reclaimDelay > 0) {
+            if (this._reclaimEntries.length > 0) {
+                if (this._reclaimTimeout == null) {
+                    this._reclaimTimeout = this._context.setTimeout(() => {
+                        this._reclaimTimeout = null;
+                        if (this._checkReclaim()) {
                             this._compact();
                         }
                         this._checkTruncate();
-                    }, this.reclaimTimeout);
+                    }, this.reclaimDelay);
                 }
-            } else if (this._purgeTimeout != null) {
-                this._context.clearTimeout(this._purgeTimeout);
-                this._purgeTimeout = null;
+            } else if (this._reclaimTimeout != null) {
+                this._context.clearTimeout(this._reclaimTimeout);
+                this._reclaimTimeout = null;
             }
         }
     }
-    private _checkPurge() {
+    private _checkReclaim() {
         let needsCompact = false;
-        if (this._purgeEntries.length > 0) {
+        if (this._reclaimEntries.length > 0) {
             const now = this._context.now();
             let i = 0;
-            while (i < this._purgeEntries.length) {
-                const data = this._purgeEntries[i];
+            while (i < this._reclaimEntries.length) {
+                const data = this._reclaimEntries[i];
                 if (data.ttl <= now) {
                     if (data.entry.purging === Purging.EntryAndData) {
                         needsCompact = !this._deleteEntryAndData(data.entry) || needsCompact;
@@ -491,11 +492,11 @@ export class Persistency {
                 } else {
                     break;
                 }
-                i++; // After the break so _purgeEntries.splice applies only over purged entries
+                i++; // After the break so _reclaimEntries.splice applies only over reclaimd entries
             }
             if (i > 0) {
-                this._purgeEntries.splice(0, i);
-                this._checkPurgeTimeout();
+                this._reclaimEntries.splice(0, i);
+                this._checkReclaimTimeout();
             }
         }
         return needsCompact;
@@ -507,12 +508,6 @@ export class Persistency {
         }
         return valueBuffer;
     }
-    compact() {
-        if (this._checkPurge()) {
-            this._compact();
-        }
-        this._checkTruncate();
-    }
     count() {
         return this._data.size;
     }
@@ -523,7 +518,7 @@ export class Persistency {
         return null;
     }
     set(key:string, value:Buffer) {
-        let needsCompact = this._checkPurge();
+        let needsCompact = this._checkReclaim();
         const entries = this._data.get(key);
         const keyBuffer = Buffer.from(key);
         const dataHash = shake128(DATA_VERSION, keyBuffer, value);
@@ -574,13 +569,13 @@ export class Persistency {
 
         this._checkTruncate();
 
-        if (entries && this.reclaimTimeout <= 0) {
+        if (entries && this.reclaimDelay <= 0) {
             // Delete old entries after data write
             for (const entry of entries.splice(0, entries.length - 1)) {
                 needsCompact = !this._deleteEntryAndData(entry) || needsCompact;
             }
         } else if (lastEntry) {
-            this._purgeEntryAndData(key, lastEntry);
+            this._reclaimEntryAndData(key, lastEntry);
         }
         if (needsCompact) {
             this._compact();
@@ -610,9 +605,9 @@ export class Persistency {
             this._fd.entries.fsync();
             this._data.delete(key);
             if (isPurging) {
-                for (let i = 0; i < this._purgeEntries.length; i++) {
-                    if (this._purgeEntries[i].key === key) {
-                        this._purgeEntries.splice(i--, 1);
+                for (let i = 0; i < this._reclaimEntries.length; i++) {
+                    if (this._reclaimEntries[i].key === key) {
+                        this._reclaimEntries.splice(i--, 1);
                     }
                 }
             }
@@ -636,12 +631,12 @@ export class Persistency {
             return;
         }
         this._closed = true;
-        if (this._purgeTimeout != null) {
-            this._context.clearTimeout(this._purgeTimeout);
-            this._purgeTimeout = null;
+        if (this._reclaimTimeout != null) {
+            this._context.clearTimeout(this._reclaimTimeout);
+            this._reclaimTimeout = null;
         }
         if (this._fd) {
-            if (this._checkPurge()) {
+            if (this._checkReclaim()) {
                 this._compact();
             }
             this._checkTruncate();

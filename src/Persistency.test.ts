@@ -65,7 +65,7 @@ test.describe("Persistency", test => {
         const folder = options?.folder || await tempFolder(after);
         const persistency = after(new Persistency({
             folder: folder,
-            reclaimTimeout: options?.reclaimTimeout
+            reclaimDelay: options?.reclaimDelay
         }, mock), persistency => persistency.close());
         return { persistency, folder };
     }
@@ -250,7 +250,7 @@ test.describe("Persistency", test => {
     test("should compact after deleting data", {
         async ARRANGE(after) {
             const { persistency } = await newPersistency(after, {
-                reclaimTimeout: 0
+                reclaimDelay: 0
             });
             persistency.set("test0", value1);
             const size = await getFileSizes(persistency); // get file size after one entry
@@ -337,7 +337,7 @@ test.describe("Persistency", test => {
         ACT({ folder }, after) {
             return newPersistency(after, {
                 folder: folder,
-                reclaimTimeout: 0
+                reclaimDelay: 0
             });
         },
         ASSERTS: {
@@ -420,7 +420,7 @@ test.describe("Persistency", test => {
             }
         }
     });
-    test("should not overwrite pending data to purge", {
+    test("should not overwrite pending data to reclaim", {
         async ARRANGE(after) {
             const { persistency } = await newPersistency(after);
             persistency.set("aaa", value1);
@@ -449,16 +449,16 @@ test.describe("Persistency", test => {
             }
         }
     });
-    test("should purge pending entry after load", {
+    test("should reclaim pending entry after load", {
         async ARRANGE(after) {
             const context = newpersistencyContext();
             const { persistency, folder } = await newPersistency(after, {
-                reclaimTimeout: 100
+                reclaimDelay: 100
             }, context);
             persistency.set("aaa", value1);
             persistency.set("aaa", value2);
-            context.tick(100); // purge entry1, which copies entry2 over entry1 so entry2 is in purge state now
-            persistency.set("aaa", value3); // write a new entry, so both entry1 and entry2 are in purge state
+            context.tick(100); // reclaim entry1, which copies entry2 over entry1 so entry2 is in reclaim state now
+            persistency.set("aaa", value3); // write a new entry, so both entry1 and entry2 are in reclaim state
             const size = await getFileSizes(persistency);
             persistency.close();
             return { folder, size, context };
@@ -466,9 +466,9 @@ test.describe("Persistency", test => {
         async ACT({ folder, context }, after) {
             const { persistency } = await newPersistency(after, {
                 folder: folder,
-                reclaimTimeout: 100
+                reclaimDelay: 100
             }, context);
-            context.tick(100); // purge entry1 and entry2, which copies entry3 over entry1. Entry2 is free
+            context.tick(100); // reclaim entry1 and entry2, which copies entry3 over entry1. Entry2 is free
             persistency.set("bbb", value1); // set a new entry which will overwrite entry2
             return { persistency };
         },
@@ -488,23 +488,23 @@ test.describe("Persistency", test => {
             }
         }
     });
-    test("should not overwrite pending data to purge after load", {
+    test("should not overwrite pending data to reclaim after load", {
         async ARRANGE(after) {
             const context = newpersistencyContext();
             const { persistency, folder } = await newPersistency(after, {
-                reclaimTimeout: 100
+                reclaimDelay: 100
             }, context);
             persistency.set("aaa", value1);
             persistency.set("aaa", value2);
-            context.tick(100); // purge entry1, which copies entry2 over entry1 so entry2 is in purge state now
-            persistency.set("aaa", value3); // write a new entry, so both entry1 and entry2 are in purge state
+            context.tick(100); // reclaim entry1, which copies entry2 over entry1 so entry2 is in reclaim state now
+            persistency.set("aaa", value3); // write a new entry, so both entry1 and entry2 are in reclaim state
             const size = await getFileSizes(persistency);
             persistency.close();
             return { folder, size };
         },
         async ACT({ folder }, after) {
             const { persistency } = await newPersistency(after, { folder });
-            persistency.set("bbb", value1); // write a new entry without purging pending entries in purge state
+            persistency.set("bbb", value1); // write a new entry without purging pending entries in reclaim state
             return { persistency };
         },
         ASSERTS: {
@@ -525,11 +525,11 @@ test.describe("Persistency", test => {
             }
         }
     });
-    test("should clean purge array when deleting a purging entry", {
+    test("should clean reclaim array when deleting a purging entry", {
         async ARRANGE(after) {
             const context = newpersistencyContext();
             const { persistency } = await newPersistency(after, {
-                reclaimTimeout: 100
+                reclaimDelay: 100
             }, context);
             persistency.set("aaa", value1);
             persistency.set("aaa", value2);
@@ -539,7 +539,7 @@ test.describe("Persistency", test => {
             persistency.delete("aaa");
             persistency.set("bbb", value3);
             persistency.set("bbb", value4);
-            // if purge array is cleaned, it will not re-clean the set entries
+            // if reclaim array is cleaned, it will not re-clean the set entries
             context.tick(100);
         },
         ASSERTS: {
@@ -599,7 +599,7 @@ test.describe("Persistency", test => {
             // Should copy test6 over test1
             // Should copy test5 over test2
             // Nothing to copy over test4
-            // Will end with test0-test3 final data, then test5 and test6 waiting to be purged
+            // Will end with test0-test3 final data, then test5 and test6 waiting to be reclaimed
             persistency.close();
             return { folder };
         },
@@ -630,7 +630,7 @@ test.describe("Persistency", test => {
             }
         }
     });
-    test("should load and compress blocks on file load without reclaimTimeout", {
+    test("should load and compress blocks on file load without reclaimDelay", {
         async ARRANGE(after) {
             const { persistency, folder } = await newPersistency(after);
             // all keys same length for easy offset calculation purposes
@@ -649,14 +649,14 @@ test.describe("Persistency", test => {
             // Should copy test6 over test1
             // Should copy test5 over test2
             // Nothing to copy over test4
-            // Will end with test0-test3 final data, then test5 and test6 already purged because of reclaimTimeout
+            // Will end with test0-test3 final data, then test5 and test6 already reclaimed because of reclaimDelay
             persistency.close();
             return { folder };
         },
         ACT({ folder }, after) {
             return newPersistency(after, {
                 folder: folder,
-                reclaimTimeout: 0
+                reclaimDelay: 0
             });
         },
         ASSERTS: {
@@ -957,20 +957,19 @@ test.describe("Persistency", test => {
         });
     });
     test.describe("compact", test => {
-        test("should purge old entry after time", {
+        test("should reclaim old entry after time", {
             async ARRANGE(after) {
                 const context = newpersistencyContext();
                 const { persistency } = await newPersistency(after, {
-                    reclaimTimeout: 100
+                    reclaimDelay: 100
                 }, context);
                 persistency.set("aaa", value1);
                 persistency.set("aaa", value2);
                 const size = await getFileSizes(persistency);
                 return { persistency, size, context };
             },
-            ACT({ persistency, context }) {
-                context.tick(100);
-                persistency.compact(); // This will copy entry2 over entry1 but entry2 will be tagged as purging
+            ACT({ context }) {
+                context.tick(100); // This will copy entry2 over entry1 but entry2 will be tagged as purging
             },
             ASSERTS: {
                 async "file sizes must be the same"(_, { persistency, size }) {
@@ -981,22 +980,20 @@ test.describe("Persistency", test => {
                 }
             }
         });
-        test("should purge old and moved entries after time", {
+        test("should reclaim old and moved entries after time", {
             async ARRANGE(after) {
                 const context = newpersistencyContext();
                 const { persistency } = await newPersistency(after, {
-                    reclaimTimeout: 100
+                    reclaimDelay: 100
                 }, context);
                 persistency.set("aaa", value1);
                 persistency.set("aaa", value2);
                 const size = await getFileSizes(persistency);
                 return { persistency, size, context };
             },
-            ACT({ persistency, context }) {
-                context.tick(100);
-                persistency.compact(); // This will copy entry2 over entry1 but entry2 will be tagged as purging
-                context.tick(100);
-                persistency.compact(); // This will finally remove last entry
+            ACT({ context }) {
+                context.tick(100); // This will copy entry2 over entry1 but entry2 will be tagged as purging
+                context.tick(100); // This will finally remove last entry
             },
             ASSERTS: {
                 async "entries file size must reduce"(_, { persistency, size }) {
@@ -1010,10 +1007,10 @@ test.describe("Persistency", test => {
                 }
             }
         });
-        test("should purge old entry instantly with reclaimTimeout: 0", {
+        test("should reclaim old entry instantly with reclaimDelay: 0", {
             async ARRANGE(after) {
                 const { persistency } = await newPersistency(after, {
-                    reclaimTimeout: 0
+                    reclaimDelay: 0
                 });
                 persistency.set("aaa", value1);
                 const size = await getFileSizes(persistency);
@@ -1038,7 +1035,7 @@ test.describe("Persistency", test => {
                     fs: newOpenFilesContext()
                 };
                 const { persistency } = await newPersistency(after, {
-                    reclaimTimeout: 0
+                    reclaimDelay: 0
                 }, context);
                 persistency.set("aaa", value1);
                 const size = await getFileSizes(persistency);
@@ -1073,7 +1070,7 @@ test.describe("Persistency", test => {
                     fs: newOpenFilesContext()
                 };
                 const { persistency, folder } = await newPersistency(after, {
-                    reclaimTimeout: 0
+                    reclaimDelay: 0
                 }, context);
                 persistency.set("aaa", value1);
                 const size = await getFileSizes(persistency);
@@ -1091,7 +1088,7 @@ test.describe("Persistency", test => {
             ACT({ folder }, after) {
                 return newPersistency(after, {
                     folder: folder,
-                    reclaimTimeout: 0
+                    reclaimDelay: 0
                 });
             },
             ASSERTS: {
@@ -1113,7 +1110,7 @@ test.describe("Persistency", test => {
                     fs: newOpenFilesContext()
                 };
                 const { persistency, folder } = await newPersistency(after, {
-                    reclaimTimeout: 0
+                    reclaimDelay: 0
                 }, context);
                 persistency.set("aaa", value1);
                 const size = await getFileSizes(persistency);
@@ -1132,7 +1129,7 @@ test.describe("Persistency", test => {
             ACT({ folder }, after) {
                 return newPersistency(after, {
                     folder: folder,
-                    reclaimTimeout: 0
+                    reclaimDelay: 0
                 });
             },
             ASSERTS: {
@@ -1147,11 +1144,11 @@ test.describe("Persistency", test => {
                 }
             }
         });
-        test("should purge after timeout", {
+        test("should reclaim after timeout", {
             async ARRANGE(after) {
                 const context = newpersistencyContext();
                 const { persistency } = await newPersistency(after, {
-                    reclaimTimeout: 100
+                    reclaimDelay: 100
                 }, context);
                 persistency.set("aaa", value1);
                 persistency.set("aaa", value2);
@@ -1177,7 +1174,7 @@ test.describe("Persistency", test => {
         test("should compact empty keys data", {
             async ARRANGE(after) {
                 const { persistency } = await newPersistency(after, {
-                    reclaimTimeout: 0
+                    reclaimDelay: 0
                 });
                 return { persistency };
             },
@@ -1197,7 +1194,7 @@ test.describe("Persistency", test => {
         test("should compact empty keys entries", {
             async ARRANGE(after) {
                 const { persistency } = await newPersistency(after, {
-                    reclaimTimeout: 0
+                    reclaimDelay: 0
                 });
                 return { persistency };
             },
@@ -1221,7 +1218,7 @@ test.describe("Persistency", test => {
         test("should compact empty keys and values", {
             async ARRANGE(after) {
                 const { persistency } = await newPersistency(after, {
-                    reclaimTimeout: 0
+                    reclaimDelay: 0
                 });
                 return { persistency };
             },
@@ -1241,7 +1238,7 @@ test.describe("Persistency", test => {
         test("should fill a big space with multiple entries at the same time", {
             async ARRANGE(after) {
                 const { persistency } = await newPersistency(after, {
-                    reclaimTimeout: 0
+                    reclaimDelay: 0
                 });
                 persistency.set("test0", value1);
                 persistency.set("test1", value2);
@@ -1296,7 +1293,7 @@ test.describe("Persistency", test => {
         test("should load properly after filling a big space with multiple entries at the same time", {
             async ARRANGE(after) {
                 const { persistency, folder } = await newPersistency(after, {
-                    reclaimTimeout: 0
+                    reclaimDelay: 0
                 });
                 persistency.set("test0", value1);
                 persistency.set("test1", value2);
