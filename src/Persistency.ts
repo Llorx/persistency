@@ -71,7 +71,14 @@ export class Persistency {
         };
         this.entriesFile = Path.join(options.folder, "entries.db");
         this.dataFile = Path.join(options.folder, "data.db");
-        this.reclaimTimeout = options.reclaimTimeout != null ? options.reclaimTimeout : 10000;
+        if (options.reclaimDelay == null) {
+            this.reclaimDelay = 10000;
+        } else if (options.reclaimDelay > 0) {
+            this.reclaimDelay = options.reclaimDelay;
+        } else {
+            this.reclaimDelay = 0;
+            this._context.now = () => 0; // Avoids overhead and applying delays because of clock synchronizing forwards/backwards
+        }
         this._fd = this._loadDataSync();
         this._checkReclaim();
         this._compact();
