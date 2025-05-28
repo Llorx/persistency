@@ -3,7 +3,7 @@ import * as Path from "path";
 
 import { Fd, openFiles, OpenFilesContext, Reader, shake128 } from "./utils";
 import { MemoryBlocks, Block } from "./MemoryBlocks";
-import { DATA_VERSION, EMPTY_ENTRY, Bytes, EntryHeaderOffsets_V0, EntryOffsets_V0, MAGIC, Values, DataOffsets_V0 } from "./constants";
+import { DATA_VERSION, Bytes, EntryHeaderOffsets_V0, EntryOffsets_V0, MAGIC, Values, DataOffsets_V0 } from "./constants";
 
 export type PersistencyOptions = {
     folder:string;
@@ -203,8 +203,6 @@ export class Persistency {
                         }
                         entries.push(loadingEntries[i].entry as Required<Entry>);
                         allLoadingEntries.push(loadingEntries[i]);
-                    } else {
-                        fd.entries.write(EMPTY_ENTRY, loadingEntries[i].location);
                     }
                 }
                 allLoadingEntries.push(loadingEntries[loadingEntries.length - 1]);
@@ -372,7 +370,6 @@ export class Persistency {
         return this._dataMemory.free(entry.dataBlock) && memoryShrinked;
     }
     private _deleteEntry(entry:Entry) {
-        this._fd.entries.write(EMPTY_ENTRY, entry.block.start);
         return this._entriesMemory.free(entry.block);
     }
     private _setAllocatedMemory(entries:LoadingEntry[]) {

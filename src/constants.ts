@@ -1,14 +1,6 @@
-import { shake128 } from "./utils";
-
 export const MAGIC = Buffer.from([ 0xFA, 0xF2, 0xD6, 0x91 ]);
 
 export const DATA_VERSION = Buffer.from([ 0x00 ]);
-
-export const EMPTY_ENTRY = Buffer.allocUnsafe(EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.SIZE);
-EMPTY_ENTRY[EntryHeaderOffsets_V0.ENTRY_VERSION] = 0;
-EMPTY_ENTRY.fill(0, EntryHeaderOffsets_V0.SIZE + EntryOffsets_V0.LOCATION);
-const entryHash = shake128(EMPTY_ENTRY.subarray(EntryHeaderOffsets_V0.SIZE));
-entryHash.copy(EMPTY_ENTRY, EntryHeaderOffsets_V0.HASH);
 
 export const enum Bytes {
     SHAKE_128 = 128 / 8,
