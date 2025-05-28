@@ -28,7 +28,7 @@ import { Persistency } from "persistency";
 
 const persistency = new Persistency({
     folder: "/path/to/data/folder",
-    reclaimDelay: 10000 // Milliseconds. Optional. 10 seconds by default. Set to 0 or negative to directly delete old entries without any waiting
+    reclaimDelay: 15 * 60 * 1000 // Milliseconds. Optional. 15 minutes by default. Set to 0 or negative to reclaim instantly.
 });
 
 // The library works with buffers, so you can use any serialization library, like pacopack

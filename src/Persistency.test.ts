@@ -36,10 +36,10 @@ test.describe("Persistency", test => {
                     return overwriteFile(persistency.entriesFile, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.ENTRY_VERSION, data);
                 },
                 entryHash(entryI:number, data:Buffer) {
-                    return overwriteFile(persistency.entriesFile, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.ENTRY_HASH, data);
+                    return overwriteFile(persistency.entriesFile, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.HASH, data);
                 },
-                dataHash(entryI:number, data:Buffer) {
-                    return overwriteFile(persistency.entriesFile, getEntryOffset(entryI) + constants.EntryHeaderOffsets_V0.SIZE + constants.EntryOffsets_V0.DATA_HASH, data);
+                dataValue(keyLength:number, dataI:number, data:Buffer) {
+                    return overwriteFile(persistency.dataFile, getDataOffset(keyLength, dataI).start, data);
                 }
             }
         };
@@ -58,7 +58,7 @@ test.describe("Persistency", test => {
         const entryLocation = getEntryOffset(entryI);
         const entryDataLocation = entryLocation + constants.EntryHeaderOffsets_V0.SIZE;
         const hash = shake128(buffer.subarray(entryDataLocation, entryDataLocation + constants.EntryOffsets_V0.SIZE));
-        hash.copy(buffer, entryLocation + constants.EntryHeaderOffsets_V0.ENTRY_HASH);
+        hash.copy(buffer, entryLocation + constants.EntryHeaderOffsets_V0.HASH);
         await Fs.writeFile(persistency.entriesFile, buffer);
     }
     async function newPersistency(after:After, options?:Partial<PersistencyOptions>|null, mock?:PersistencyContext) {
@@ -931,13 +931,13 @@ test.describe("Persistency", test => {
                 }
             }
         });
-        test("should invalidate entry if data hash is invalid", {
+        test("should invalidate entry if data contents are invalid", {
             async ARRANGE(after) {
                 const { persistency, folder } = await newPersistency(after);
                 persistency.set("test0", value1);
                 persistency.set("test1", value2);
                 persistency.close();
-                await overwrite(persistency).entry.dataHash(0, Buffer.from([ 0x00, 0x01 ]));
+                await overwrite(persistency).entry.dataValue(5, 0, Buffer.from([ 0x99, 0x98 ]));
                 return { folder };
             },
             ACT({ folder }, after) {

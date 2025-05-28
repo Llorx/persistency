@@ -72,7 +72,7 @@ export class Persistency {
         this.entriesFile = Path.join(options.folder, "entries.db");
         this.dataFile = Path.join(options.folder, "data.db");
         if (options.reclaimDelay == null) {
-            this.reclaimDelay = 10000;
+            this.reclaimDelay = 15 * 60 * 1000;
         } else if (options.reclaimDelay > 0) {
             this.reclaimDelay = options.reclaimDelay;
         } else {
@@ -98,15 +98,9 @@ export class Persistency {
                     entriesReader.advance(buffers.entry.length);
                     throw new Error("Invalid entry version");
                 }
-                const storedEntryHash = buffers.entryHeader.subarray(EntryHeaderOffsets_V0.ENTRY_HASH, EntryHeaderOffsets_V0.ENTRY_HASH + Bytes.SHAKE_128);
                 entriesReader.read(buffers.entry, true);
-                const entryHash = shake128(buffers.entry);
-                if (!entryHash.equals(storedEntryHash)) {
-                    throw new Error("Invalid entry hash");
-                }
                 const dataLocation = buffers.entry.readUIntBE(EntryOffsets_V0.LOCATION, Bytes.UINT_48) + (buffers.entry[EntryOffsets_V0.LOCATION + 6] * Values.UINT_48_ROLLOVER); // Maximum read value in nodejs is 6 bytes, so we need a workaround for 7 bytes
                 if (dataLocation > 0) {
-                    const storedDataHash = buffers.entry.subarray(EntryOffsets_V0.DATA_HASH, EntryOffsets_V0.DATA_HASH + Bytes.SHAKE_128);
                     const dataVersion = buffers.entry.readUInt32BE(EntryOffsets_V0.DATA_VERSION);
                     const keySize = buffers.entry.readUInt32BE(EntryOffsets_V0.KEY_SIZE);
                     const valueSize = buffers.entry.readUInt32BE(EntryOffsets_V0.VALUE_SIZE);
@@ -115,8 +109,9 @@ export class Persistency {
                     if (dataBuffer[DataOffsets_V0.VERSION] !== 0) {
                         throw new Error("Invalid data version");
                     }
-                    const dataHash = shake128(dataBuffer);
-                    if (!dataHash.equals(storedDataHash)) {
+                    const storedHash = buffers.entryHeader.subarray(EntryHeaderOffsets_V0.HASH, EntryHeaderOffsets_V0.HASH + Bytes.SHAKE_128);
+                    const hash = shake128(buffers.entry, dataBuffer);
+                    if (!hash.equals(storedHash)) {
                         throw new Error("Invalid data hash");
                     }
                     const key:string = (dataBuffer as any).utf8Slice(DataOffsets_V0.SIZE, DataOffsets_V0.SIZE + keySize); // small optimization non-documented methods
@@ -281,13 +276,11 @@ export class Persistency {
                                     entryBuffer.writeUIntBE(newEntry.dataBlock.start - (dataLocationByte7 * Values.UINT_48_ROLLOVER), EntryOffsets_V0.LOCATION, Bytes.UINT_48);
                                     entryBuffer[EntryOffsets_V0.LOCATION + 6] = dataLocationByte7;
     
-                                    const dataHash = shake128(dataBuffer);
-                                    dataHash.copy(entryBuffer, EntryOffsets_V0.DATA_HASH);
                                     entryBuffer.writeUInt32BE(newEntry.dataVersion, EntryOffsets_V0.DATA_VERSION);
                                     entryBuffer.writeUInt32BE(keySize, EntryOffsets_V0.KEY_SIZE);
                                     entryBuffer.writeUInt32BE((dataSize - DataOffsets_V0.SIZE) - keySize, EntryOffsets_V0.VALUE_SIZE);
-                                    const entryHash = shake128(entryBuffer);
-                                    entryHash.copy(entryHeaderBuffer, EntryHeaderOffsets_V0.ENTRY_HASH);
+                                    const hash = shake128(entryBuffer, dataBuffer);
+                                    hash.copy(entryHeaderBuffer, EntryHeaderOffsets_V0.HASH);
     
                                     this._fd.data.write(dataBuffer, newEntry.dataBlock.start);
                                     this._fd.data.fsync();
@@ -528,7 +521,6 @@ export class Persistency {
         let needsCompact = this._checkReclaim();
         const entries = this._data.get(key);
         const keyBuffer = Buffer.from(key);
-        const dataHash = shake128(DATA_VERSION, keyBuffer, value);
 
         // TODO: Duplicated in compact logic. Fix somehow...
         const partialEntry = this._getFreeEntryLocation({
@@ -558,12 +550,11 @@ export class Persistency {
         entryBuffer.writeUIntBE(entry.dataBlock.start - (dataLocationByte7 * Values.UINT_48_ROLLOVER), EntryOffsets_V0.LOCATION, Bytes.UINT_48);
         entryBuffer[EntryOffsets_V0.LOCATION + 6] = dataLocationByte7;
 
-        dataHash.copy(entryBuffer, EntryOffsets_V0.DATA_HASH);
         entryBuffer.writeUInt32BE(entry.dataVersion, EntryOffsets_V0.DATA_VERSION);
         entryBuffer.writeUInt32BE(keyBuffer.length, EntryOffsets_V0.KEY_SIZE);
         entryBuffer.writeUInt32BE(value.length, EntryOffsets_V0.VALUE_SIZE);
-        const entryHash = shake128(entryBuffer);
-        entryHash.copy(entryHeaderBuffer, EntryHeaderOffsets_V0.ENTRY_HASH);
+        const hash = shake128(entryBuffer, DATA_VERSION, keyBuffer, value);
+        hash.copy(entryHeaderBuffer, EntryHeaderOffsets_V0.HASH);
 
         this._fd.data.write(DATA_VERSION, entry.dataBlock.start);
         this._fd.data.write(keyBuffer, entry.dataBlock.start + DataOffsets_V0.SIZE);
