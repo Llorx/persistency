@@ -11,7 +11,7 @@ To achieve resiliency in the event of a crash or power outage, this library appl
 - **[fsync](https://man7.org/linux/man-pages/man2/fsync.2.html)**: Everything is flushed to the disk after a modification, to increase the certainty that data has been persisted to disk.
 - **Delayed empty space reclamation**: To avoid growing the data infinitely, the library will reclaim old data and overwrite it with new data when needed. The problem is that after sending the data to the disk by using [fsync](https://man7.org/linux/man-pages/man2/fsync.2.html), the disk could still have an internal cache that can lead to data loss in the case of a power outage. Not having any feedback mechanism for the device to notify us about this cache flush, the only way that we can *ensure* data persistency to the disk is with *time*. After a section of data is freed to reuse, the library will wait a configurable amount of time before reclaiming the data for overwriting.
 
-With all these measures, the data integrity and consistency is guaranteed.
+With all these measures, the data integrity and consistency is guaranteed. They are explained in detail (and with animations) [in this post](https://medium.com/@Llorx/this-one-flaw-could-destroy-your-data-an-analysis-on-resilient-data-persistence-node-js-cd33d8835346).
 
 # Limits
 
