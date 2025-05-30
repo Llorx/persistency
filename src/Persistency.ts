@@ -8,7 +8,6 @@ import { DATA_VERSION, Bytes, EntryHeaderOffsets_V0, EntryOffsets_V0, MAGIC, Val
 export type PersistencyOptions = {
     folder:string;
     reclaimDelay?:number;
-    autoCompactTimeout?:number;
 };
 export type PersistencyContext = Partial<{
     now():number; // Inject "world access" dependency for easier testing
