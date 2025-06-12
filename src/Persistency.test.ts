@@ -1,6 +1,6 @@
 import * as Fs from "fs/promises";
 
-import test, { After, asyncMonad } from "arrange-act-assert";
+import test, { After, monad } from "arrange-act-assert";
 
 import { assertDeepEqual, assertEqual, newOpenFilesContext, tempFolder } from "./testUtils";
 import { Persistency, PersistencyContext, PersistencyOptions } from "./Persistency";
@@ -62,7 +62,7 @@ test.describe("Persistency", test => {
         await Fs.writeFile(persistency.entriesFile, buffer);
     }
     async function newPersistency(after:After, options?:Partial<PersistencyOptions>|null, mock?:PersistencyContext) {
-        const folder = options?.folder || await tempFolder(after);
+        const folder = options?.folder ?? await tempFolder(after);
         const persistency = after(new Persistency({
             folder: folder,
             reclaimDelay: options?.reclaimDelay
@@ -125,6 +125,18 @@ test.describe("Persistency", test => {
         };
     }
     // end helpers
+    test("should error if no folder passed", {
+        ACT(_, after) {
+            return monad(() => newPersistency(after, {
+                folder: ""
+            }));
+        },
+        ASSERT(res) {
+            res.should.error({
+                message: /Invalid folder/
+            });
+        }
+    });
     test("should set and get data", {
         ARRANGE(after) {
             return newPersistency(after);
@@ -139,6 +151,18 @@ test.describe("Persistency", test => {
             "should count the number of entries"(_, { persistency }) {
                 assertEqual(persistency.count(), 1);
             }
+        }
+    });
+    test("should list all data", {
+        async ARRANGE(after) {
+            const { persistency } = await newPersistency(after);
+            persistency.set("test1", value1);
+            persistency.set("test2", value2);
+            persistency.set("test3", value3);
+            return { persistency };
+        },
+        SNAPSHOT({ persistency }) {
+            return Array.from(persistency.cursor());
         }
     });
     test("should set and get empty data", {
@@ -188,6 +212,18 @@ test.describe("Persistency", test => {
             }
         }
     });
+    test("should list all data loaded from file", {
+        async ARRANGE(after) {
+            const { persistency, folder } = await newPersistency(after);
+            persistency.set("test", value1);
+            persistency.set("test2", value2);
+            persistency.close();
+            return newPersistency(after, { folder });
+        },
+        SNAPSHOT({ persistency } ) {
+            return Array.from(persistency.cursor());
+        }
+    });
     test("should update data", {
         ARRANGE(after) {
             return newPersistency(after);
@@ -233,9 +269,12 @@ test.describe("Persistency", test => {
             return { persistency };
         },
         ACT({ persistency }) {
-            persistency.delete("test");
+            return persistency.delete("test");
         },
         ASSERTS: {
+            "should return if the data was deleted"(res) {
+                assertEqual(res, true);
+            },
             "should not have first data"(_, { persistency }) {
                 assertEqual(persistency.get("test"), null);
             },
@@ -245,6 +284,20 @@ test.describe("Persistency", test => {
             "should count the number of entries"(_, { persistency }) {
                 assertEqual(persistency.count(), 1);
             }
+        }
+    });
+    test("should return false if deleted data doesn't exist", {
+        async ARRANGE(after) {
+            const { persistency } = await newPersistency(after);
+            persistency.set("test", value1);
+            persistency.set("test2", value2);
+            return { persistency };
+        },
+        ACT({ persistency }) {
+            return persistency.delete("test3");
+        },
+        ASSERT(res) {
+            assertEqual(res, false);
         }
     });
     test("should compact after deleting data", {
@@ -259,9 +312,12 @@ test.describe("Persistency", test => {
             return { persistency, size };
         },
         ACT({ persistency }) {
-            persistency.delete("test0");
+            return persistency.delete("test0");
         },
         ASSERTS: {
+            "should return if the data was deleted"(res) {
+                assertEqual(res, true);
+            },
             async "entries file size must match"(_, { persistency, size }) {
                 assertEqual(await getFileSize(persistency.entriesFile), size.entries);
             },
@@ -693,9 +749,12 @@ test.describe("Persistency", test => {
                 return { persistency, fileSizes };
             },
             ACT({ persistency }) {
-                persistency.delete("test3");
+                return persistency.delete("test3");
             },
             ASSERTS: {
+                "should return if the data was deleted"(res) {
+                    assertEqual(res, true);
+                },
                 "should not have entry3"(_, { persistency }) {
                     assertEqual(persistency.get("entry3"), null);
                 },
@@ -766,7 +825,7 @@ test.describe("Persistency", test => {
                 return { folder };
             },
             ACT({ folder }, after) {
-                return asyncMonad(() => newPersistency(after, { folder }));
+                return monad(() => newPersistency(after, { folder }));
             },
             ASSERT(res) {
                 res.should.error({
@@ -785,7 +844,7 @@ test.describe("Persistency", test => {
                 return { folder };
             },
             ACT({ folder }, after) {
-                return asyncMonad(() => newPersistency(after, { folder }));
+                return monad(() => newPersistency(after, { folder }));
             },
             ASSERT(res) {
                 res.should.error({

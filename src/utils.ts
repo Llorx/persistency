@@ -94,6 +94,7 @@ export function openFiles(options:{entriesFile:string; dataFile:string;}, contex
             } catch (e) {}
         }
         if (dataFd != null) {
+            // Unreachable, but keeping the code
             try {
                 context.closeSync(dataFd);
             } catch (e) {}
