@@ -576,7 +576,7 @@ export class Persistency {
         }
         this._checkTruncate();
     }
-    get(key:string) {
+    get(key:string):Buffer|null {
         const entries = this._data.get(key);
         if (entries) {
             const lastEntry = entries[entries.length - 1];

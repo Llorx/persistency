@@ -70,7 +70,7 @@ function fdAction(fd:number, context:FdActionContext) {
         }
     };
 }
-export function shake128(...buffers:Buffer[]) {
+export function shake128(...buffers:Buffer[]):Buffer {
     const hash = Crypto.createHash("shake128");
     for (const buffer of buffers) {
         hash.update(buffer);

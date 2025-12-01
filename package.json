@@ -1,6 +1,6 @@
 {
   "name": "persistency",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "The lightweight resilient persistency library",
   "main": "lib/",
   "types": "lib/types",
@@ -16,7 +16,6 @@
     "watch": "npm run clean && npx tsc -p tsconfig.json -watch",
     "build": "npm run clean && npx tsc -p tsconfig.build.json",
     "build-debug": "npm run clean && npx tsc -p tsconfig.json",
-    "build-test": "npm run clean && npx tsc -p tsconfig.test.json",
     "test": "npx aaa",
     "clean": "node -e \"require('fs').rm('lib', {recursive: true, force:true}, O_o => {})\""
   },
