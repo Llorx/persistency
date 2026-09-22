@@ -83,6 +83,28 @@ test.describe("Persistency", test => {
             data: await getFileSize(persistency.dataFile)
         };
     }
+    async function getPersistencyState(persistency:Persistency, key:string) {
+        return {
+            count: persistency.count(),
+            value: persistency.get(key),
+            entries: Array.from(persistency.cursor()),
+            blocks: persistency.getAllocatedBlocks(),
+            sizes: await getFileSizes(persistency)
+        };
+    }
+    function getExpectedSingleEntryState(key:string, value:Buffer):Awaited<ReturnType<typeof getPersistencyState>> {
+        const sizes = {
+            entries: getEntryOffset(1),
+            data: constants.MAGIC.length + constants.DataOffsets_V0.SIZE + Buffer.byteLength(key) + value.length
+        };
+        return {
+            count: 1,
+            value,
+            entries: [[key, value]],
+            blocks: { entries: [[0, sizes.entries]], data: [[0, sizes.data]] },
+            sizes
+        };
+    }
     function newpersistencyContext() {
         let now = Date.now();
         const timeouts:{cb:()=>void, ts:number}[] = [];
@@ -300,6 +322,82 @@ test.describe("Persistency", test => {
             assertEqual(res, false);
         }
     });
+    for (const reopen of [false, true]) {
+        for (const overwrite of [false, true]) {
+            test(`should delete shared data once ${reopen ? "after reopening" : "without reopening"}${overwrite ? " after an overwrite" : ""}`, {
+                async ARRANGE(after) {
+                    const context = newpersistencyContext();
+                    const options = { reclaimDelay: 100 };
+                    let { persistency, folder } = await newPersistency(after, options, context);
+                    const emptyState = await getPersistencyState(persistency, "bbb");
+                    const smallValue = value1.subarray(0, 1);
+                    const largeValue = Buffer.concat([value1, value2, value3, value4]);
+                    persistency.set("aaa", smallValue);
+                    if (overwrite) {
+                        persistency.set("aab", smallValue);
+                        persistency.set("aac", smallValue);
+                    }
+                    persistency.set("bbb", largeValue);
+                    // The index fits in the deleted entry's space, but the data does not.
+                    if (overwrite) {
+                        // Create more than two indexes sharing the data before replacing its value.
+                        persistency.delete("aac");
+                        persistency.delete("aab");
+                    }
+                    const firstDeleted = persistency.delete("aaa");
+                    if (overwrite) {
+                        persistency.set("bbb", Buffer.concat([value4, value3, value2, value1]));
+                    }
+                    if (reopen) {
+                        persistency.close();
+                        ({ persistency } = await newPersistency(after, { ...options, folder }, context));
+                    }
+                    return { persistency, folder, context, options, emptyState, largeValue, firstDeleted };
+                },
+                async ACT({ persistency, folder, context, options, largeValue }, after) {
+                    const deleted = persistency.delete("bbb");
+                    const deletedAgain = persistency.delete("bbb");
+                    const emptyAfterDelete = await getPersistencyState(persistency, "bbb");
+                    context.tick(options.reclaimDelay);
+                    const emptyAfterMaintenance = await getPersistencyState(persistency, "bbb");
+                    persistency.close();
+                    ({ persistency } = await newPersistency(after, { ...options, folder }, context));
+                    const emptyAfterReopen = await getPersistencyState(persistency, "bbb");
+                    persistency.set("ccc", largeValue);
+                    context.tick(options.reclaimDelay);
+                    const reused = await getPersistencyState(persistency, "ccc");
+                    persistency.close();
+                    ({ persistency } = await newPersistency(after, { ...options, folder }, context));
+                    const reusedAfterReopen = await getPersistencyState(persistency, "ccc");
+                    return { deleted, deletedAgain, emptyAfterDelete, emptyAfterMaintenance, emptyAfterReopen, reused, reusedAfterReopen };
+                },
+                ASSERTS: {
+                    "should return true for both existing keys"({ deleted }, { firstDeleted }) {
+                        assertEqual(firstDeleted, true);
+                        assertEqual(deleted, true);
+                    },
+                    "should return false when deleting the key again"({ deletedAgain }) {
+                        assertEqual(deletedAgain, false);
+                    },
+                    "should release all blocks and truncate both files"({ emptyAfterDelete }, { emptyState }) {
+                        assertDeepEqual(emptyAfterDelete, emptyState);
+                    },
+                    "should leave no pending reclamation for the deleted key"({ emptyAfterMaintenance }, { emptyState }) {
+                        assertDeepEqual(emptyAfterMaintenance, emptyState);
+                    },
+                    "should remain empty after reopening"({ emptyAfterReopen }, { emptyState }) {
+                        assertDeepEqual(emptyAfterReopen, emptyState);
+                    },
+                    "should reuse the released space and preserve the replacement during maintenance"({ reused }, { largeValue }) {
+                        assertDeepEqual(reused, getExpectedSingleEntryState("ccc", largeValue));
+                    },
+                    "should preserve the replacement and its allocation after reopening"({ reused, reusedAfterReopen }) {
+                        assertDeepEqual(reusedAfterReopen, reused);
+                    }
+                }
+            });
+        }
+    }
     test("should compact after deleting data", {
         async ARRANGE(after) {
             const { persistency } = await newPersistency(after, {
@@ -1016,6 +1114,48 @@ test.describe("Persistency", test => {
         });
     });
     test.describe("compact", test => {
+        for (const reopen of [false, true]) {
+            test(`should compact shared data after reclaiming its old index ${reopen ? "after reopening" : "without reopening"}`, {
+                async ARRANGE(after) {
+                    const context = newpersistencyContext();
+                    const options = { reclaimDelay: 100 };
+                    let { persistency, folder } = await newPersistency(after, options, context);
+                    const remainingValue = Buffer.concat([value1, value2]);
+                    // Keep a larger record before the last one to make room for a later data move.
+                    persistency.set("aaa", value1);
+                    persistency.set("bbb", Buffer.concat([value1, value2, value3, value4]));
+                    persistency.set("ccc", remainingValue);
+                    persistency.delete("aaa");
+                    if (reopen) {
+                        persistency.close();
+                        ({ persistency } = await newPersistency(after, { ...options, folder }, context));
+                    }
+                    context.tick(options.reclaimDelay);
+                    return { persistency, folder, context, options, remainingValue };
+                },
+                async ACT({ persistency, folder, context, options }, after) {
+                    const deleted = persistency.delete("bbb");
+                    context.tick(options.reclaimDelay);
+                    context.tick(options.reclaimDelay);
+                    const compacted = await getPersistencyState(persistency, "ccc");
+                    persistency.close();
+                    ({ persistency } = await newPersistency(after, { ...options, folder }, context));
+                    const compactedAfterReopen = await getPersistencyState(persistency, "ccc");
+                    return { deleted, compacted, compactedAfterReopen };
+                },
+                ASSERTS: {
+                    "should delete the record before the shared data"({ deleted }) {
+                        assertEqual(deleted, true);
+                    },
+                    "should move the remaining data into the gap and truncate the files"({ compacted }, { remainingValue }) {
+                        assertDeepEqual(compacted, getExpectedSingleEntryState("ccc", remainingValue));
+                    },
+                    "should preserve the compacted data and allocation after reopening"({ compacted, compactedAfterReopen }) {
+                        assertDeepEqual(compactedAfterReopen, compacted);
+                    }
+                }
+            });
+        }
         test("should reclaim old entry after time", {
             async ARRANGE(after) {
                 const context = newpersistencyContext();

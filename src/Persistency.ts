@@ -347,6 +347,7 @@ export class Persistency {
                             purging: Purging.None
                         }) as Entry;
 
+                        newEntry.dataBlock.data = newEntry;
                         entries.push(newEntry);
                         this._fd.entries.write(entryBuffer, newEntry.block.start);
                         this._fd.entries.fsync();
@@ -364,12 +365,12 @@ export class Persistency {
             }
         }
     }
-    private _deleteEntryAndData(entry:Entry) {
-        const memoryShrinked = this._deleteEntry(entry);
-        return this._dataMemory.free(entry.dataBlock) && memoryShrinked;
-    }
     private _deleteEntry(entry:Entry) {
-        return this._entriesMemory.free(entry.block);
+        const memoryShrinked = this._entriesMemory.free(entry.block);
+        if (entry.purging === Purging.Entry) {
+            return memoryShrinked;
+        }
+        return this._dataMemory.free(entry.dataBlock) && memoryShrinked;
     }
     private _setAllocatedMemory(entries:LoadingEntry[]) {
         this._setAllocatedEntries(entries);
@@ -386,8 +387,17 @@ export class Persistency {
     private _setFreeMemoryData(entries:LoadingEntry[]) {
         entries.sort((a, b) => a.dataLocation - b.dataLocation);
         const dataAllocation = this._dataMemory.setAllocation();
+        let dataBlock:Block<Entry>|null = null;
         for (const loadingEntry of entries) {
-            loadingEntry.entry.dataBlock = dataAllocation.add(loadingEntry.dataLocation, loadingEntry.entry.valueLocation + loadingEntry.valueSize, loadingEntry.entry as Required<Entry>);
+            const entry = loadingEntry.entry as Entry;
+            const end = entry.valueLocation + loadingEntry.valueSize;
+            if (dataBlock == null || dataBlock.start !== loadingEntry.dataLocation || dataBlock.end !== end) {
+                dataBlock = dataAllocation.add(loadingEntry.dataLocation, end, entry);
+            }
+            entry.dataBlock = dataBlock;
+            if (entry.purging !== Purging.Entry) {
+                dataBlock.data = entry;
+            }
         }
     }
     private _getFreeEntryLocation(entry:PartialEntry) {
@@ -478,11 +488,7 @@ export class Persistency {
             while (i < this._reclaimEntries.length) {
                 const data = this._reclaimEntries[i];
                 if (data.ttl <= now) {
-                    if (data.entry.purging === Purging.EntryAndData) {
-                        needsCompact = !this._deleteEntryAndData(data.entry) || needsCompact;
-                    } else {
-                        needsCompact = !this._deleteEntry(data.entry) || needsCompact;
-                    }
+                    needsCompact = !this._deleteEntry(data.entry) || needsCompact;
                     const entries = this._data.get(data.key)!;
                     entries.splice(entries.indexOf(data.entry), 1);
                 } else {
@@ -566,7 +572,7 @@ export class Persistency {
         if (entries && this.reclaimDelay <= 0) {
             // Delete old entries after data write
             for (const entry of entries.splice(0, entries.length - 1)) {
-                needsCompact = !this._deleteEntryAndData(entry) || needsCompact;
+                needsCompact = !this._deleteEntry(entry) || needsCompact;
             }
         } else if (lastEntry) {
             this._reclaimEntryAndData(key, lastEntry);
@@ -594,7 +600,7 @@ export class Persistency {
                 if (entry.purging !== Purging.None) {
                     isPurging = true;
                 }
-                needsCompact = !this._deleteEntryAndData(entry) || needsCompact;
+                needsCompact = !this._deleteEntry(entry) || needsCompact;
             }
             this._fd.entries.fsync();
             this._data.delete(key);

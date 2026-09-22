@@ -1,6 +1,6 @@
 {
   "name": "persistency",
-  "version": "2.0.4",
+  "version": "2.0.5",
   "description": "The lightweight resilient persistency library",
   "main": "lib/",
   "types": "lib/types",
@@ -31,7 +31,8 @@
   "homepage": "https://github.com/Llorx/persistency#readme",
   "devDependencies": {
     "@types/node": "^22.7.8",
-    "typescript": "^5.6.3",
-    "arrange-act-assert": "^2.5.1"
+    "arrange-act-assert": "^2.5.1",
+    "iso-bench": "^3.2.1",
+    "typescript": "^5.6.3"
   }
 }
